@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import { LocalizedError } from "./i18n.ts";
 
 export type DataSource = "default" | "config" | "env";
 export interface DataDir { dir: string; source: DataSource; }
@@ -9,7 +10,7 @@ export interface DataDir { dir: string; source: DataSource; }
 /** Expands a leading "~" and requires an absolute path, so the result never depends on where pi was started. */
 export function expandDir(input: string): string {
   const p = input.trim().replace(/^~(?=$|[\\/])/, homedir());
-  if (!p || !isAbsolute(p)) throw new Error("请填写完整路径，例如 ~/Dropbox/pi-sessions");
+  if (!p || !isAbsolute(p)) throw new LocalizedError("needFullPath");
   return resolve(p);
 }
 
@@ -25,7 +26,7 @@ export class DataLocation {
     const fromEnv = this.env.PI_SESSIONS_DATA_DIR?.trim();
     if (fromEnv) {
       try { return { dir: expandDir(fromEnv), source: "env" }; }
-      catch { throw new Error(`PI_SESSIONS_DATA_DIR 需要完整路径（例如 ~/Dropbox/pi-sessions），现在是「${fromEnv}」`); }
+      catch { throw new LocalizedError("envNeedsFullPath", [fromEnv]); }
     }
     // A missing, corrupt or relative setting falls back to the default dir.
     try {
@@ -68,7 +69,7 @@ export const DEFAULT_IMAGE_DIR = join(homedir(), "Pictures", "pi-sessions");
 export async function checkWritable(dir: string): Promise<void> {
   const probe = join(dir, `.pi-sessions-${process.pid}.probe`);
   try { await mkdir(dir, { recursive: true }); await writeFile(probe, ""); await rm(probe, { force: true }); }
-  catch (e) { throw new Error(`无法写入这个目录（${(e as NodeJS.ErrnoException).code ?? (e as Error).message}）`); }
+  catch (e) { throw new LocalizedError("notWritable", [(e as NodeJS.ErrnoException).code ?? (e as Error).message]); }
 }
 
 /** Opens a URL in the browser or a folder in Finder / Explorer / the file manager. */

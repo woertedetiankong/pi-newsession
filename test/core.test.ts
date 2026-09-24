@@ -251,10 +251,10 @@ test("server /api/ask validates input and returns ranked hits", async t => {
 
 test("displayLine turns skill invocations into a readable first line", () => {
   const skill = '<skill name="find-skills" location="/x/SKILL.md">\n# Find Skills\nlots of text\n</skill>';
-  assert.equal(displayLine(skill), "技能：find-skills");
+  assert.equal(displayLine(skill), "[find-skills]");
   assert.equal(displayLine(skill + "\n\n帮我找个 PDF 技能\n第二行"), "[find-skills] 帮我找个 PDF 技能");
   assert.equal(displayLine("普通问题\n第二行"), "普通问题");
-  assert.equal(parseSession("/x", sessionFile("s", "/w", [["user", skill]]), new Date(0))!.firstUser, "技能：find-skills");
+  assert.equal(parseSession("/x", sessionFile("s", "/w", [["user", skill]]), new Date(0))!.firstUser, "[find-skills]");
 });
 
 test("scanner reads flat custom session dirs and validates switch targets", async t => {
@@ -504,4 +504,46 @@ test("server exports images to the chosen folder, keeps the folder after a renam
   st = await (await call("/api/storage/images", { dir: "" })).json();
   assert.equal(st.images.isDefault, true);
   assert.equal(JSON.parse(await readFile(join(home, "config.json"), "utf8")).imageDir, undefined);
+});
+
+test("english pages: errors, transcript notes, ask reasons and exported file names follow x-lang", async t => {
+  const root = await temp(t), sessions = join(root, "sessions"), token = "d".repeat(32);
+  await mkdir(join(sessions, "p"), { recursive: true });
+  const file = join(sessions, "p", "a.jsonl");
+  const pic = { type: "message", id: "u1", parentId: "e0", timestamp: "2026-09-23T08:05:00.000Z", message: { role: "user", content: [{ type: "text", text: "see" }, { type: "image", data: "YQ==", mimeType: "image/png" }] } };
+  const compacted = { type: "compaction", id: "c1", parentId: "u1", timestamp: "2026-09-23T08:06:00.000Z", summary: "earlier work" };
+  await writeFile(file, sessionFile("sessEN12abcd", "/w", [["user", "scroll bug"]], [pic, compacted]));
+  await writeFile(join(root, "index.html"), "");
+  const location = new DataLocation(join(root, "data"), {});
+  const server = new SessionsServer({ root: sessions, metaFile: join(root, "data", "meta.json"), location, webFile: join(root, "index.html"), token });
+  const base = new URL(await server.start()).origin;
+  t.after(() => server.close());
+  const call = (path: string, lang: string, body?: object) => fetch(base + api(path), body
+    ? { method: "POST", headers: { "x-token": token, "x-lang": lang, "content-type": "application/json" }, body: JSON.stringify(body) }
+    : { headers: { "x-token": token, "x-lang": lang } });
+
+  assert.equal((await (await call("/api/transcript?id=nope", "en")).json()).error, "Session not found; it may have been deleted");
+  assert.equal((await (await call("/api/transcript?id=nope", "zh")).json()).error, "找不到这个会话，可能已被删除");
+  assert.equal((await (await call("/api/storage/images", "en", { dir: "relative" })).json()).error, "Enter a full path, e.g. ~/Dropbox/pi-sessions");
+  assert.equal((await (await call("/api/ask", "en", { query: "x" })).json()).error, "pi is switching sessions; try again in a moment");
+
+  const en = await (await call("/api/transcript?id=sessEN12abcd", "en")).json();
+  assert.equal(en.items.at(-1).title, "Context compacted");
+  const zh = await (await call("/api/transcript?id=sessEN12abcd", "zh")).json();
+  assert.equal(zh.items.at(-1).title, "上下文已压缩", "the cache keeps each language apart");
+
+  const out = join(root, "images");
+  await call("/api/storage/images", "en", { dir: out });
+  const r = await (await call("/api/images/export", "en", { ids: ["sessEN12abcd"] })).json();
+  assert.equal(await readFile(join(r.folder, "001-user.png"), "utf8"), "a");
+  const again = await (await call("/api/images/export", "zh", { ids: ["sessEN12abcd"] })).json();
+  assert.equal(again.written, 0, "exporting in the other language does not duplicate images");
+
+  let prompt = "";
+  const ctx = { model: { id: "m" }, modelRegistry: { complete: async (_m: unknown, req: any) => { prompt = req.systemPrompt; return { stopReason: "stop", content: [{ type: "text", text: '{"results":[]}' }] }; } } } as any;
+  const records = [parseSession(file, await readFile(file, "utf8"), new Date())!];
+  await askSessions(ctx, "scroll", records, {}, new AbortController().signal, new Date(), "en");
+  assert.match(prompt, /reason 用英文写/);
+  await askSessions(ctx, "scroll", records, {}, new AbortController().signal, new Date(), "zh");
+  assert.doesNotMatch(prompt, /用英文写/);
 });

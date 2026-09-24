@@ -13,7 +13,7 @@
 pi install git:github.com/woertedetiankong/pi-newsession
 
 # 或锁定到某个版本，不随仓库更新而变化
-pi install git:github.com/woertedetiankong/pi-newsession@v0.2.0
+pi install git:github.com/woertedetiankong/pi-newsession@v0.2.1
 
 # 或只装到当前项目（写入 .pi/settings.json）
 pi install git:github.com/woertedetiankong/pi-newsession -l
@@ -35,6 +35,16 @@ pi -e git:github.com/woertedetiankong/pi-newsession
 ### 和其他 pi 插件共用一个网页
 
 页面由 pi-web 共享服务提供（`src/hub.ts`），同时安装了 [pi-kb 知识库](https://github.com/woertedetiankong/pi-kb) 等支持 pi-web 的插件时，它们在同一个地址下：会话在 `/sessions/`，知识库在 `/kb/`，顶部可以直接切换，共用一个访问令牌。只装了本插件时，页面和以前一样。旧的 `http://127.0.0.1:47291/#token=…` 链接会自动跳到 `/sessions/`。
+
+## 语言 / Language
+
+页面支持中文和英文：点顶部的「EN / 中文」切换，或在地址后加 `?lang=en` / `?lang=zh`；没选过时跟随浏览器语言。切换后，服务端的提示、对话里的系统标注（如「上下文已压缩」）、「用 AI 找」给出的理由、导出图片的文件名（`001-用户.png` / `001-user.png`）也跟着变；换语言后再次导出不会重复写入。
+
+搜索框里的时间词两种语言都能用：`今天 昨天 本周 上周 本月 上个月 8月 2026年8月`，以及 `today yesterday this-week last-week this-month last-month aug august 2026-08`。
+
+终端里 `/sessions` 的提示跟随系统语言（macOS 上读系统界面语言），可以用环境变量 `PI_SESSIONS_LANG=zh|en` 指定。
+
+The page is available in Chinese and English (toggle in the header, or `?lang=en`). Server messages, transcript notes, Ask AI reasons and exported image names follow it. Time words such as `last-week` and `aug` work in the search box in either language. Terminal messages follow the system language or `PI_SESSIONS_LANG`.
 
 ## 页面
 

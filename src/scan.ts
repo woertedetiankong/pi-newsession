@@ -29,7 +29,7 @@ export function displayLine(text: string): string {
   const skill = text.match(/^<skill\s+name="([^"]+)"[^>]*>[\s\S]*?<\/skill>\s*/);
   if (skill) {
     const rest = text.slice(skill[0].length).trim();
-    return (rest ? `[${skill[1]}] ${rest.split("\n")[0]}` : `技能：${skill[1]}`).slice(0, 200);
+    return (rest ? `[${skill[1]}] ${rest.split("\n")[0]}` : `[${skill[1]}]`).slice(0, 200);
   }
   return text.split("\n")[0].slice(0, 200);
 }

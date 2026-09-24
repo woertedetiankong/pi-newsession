@@ -47,7 +47,11 @@ header { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; pad
 .pi-web-multi .brand-name { display: none; }
 .pi-web-multi .brand { min-width: 0; }
 .brand .logo { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 13px; }
-.search { flex: 1; max-width: 560px; position: relative; }
+/* Header: controls keep their size and never wrap; the search box takes free space first. */
+header > * { flex-shrink: 0; }
+header .btn, .seg button { white-space: nowrap; }
+/* The search box takes free space first and never shrinks below a usable width. */
+header > .search { flex: 3 1 260px; min-width: 220px; max-width: 560px; position: relative; }
 .search input { width: 100%; height: 36px; border: 1px solid var(--line-strong); background: var(--bg); color: var(--text); border-radius: 8px; padding: 0 34px 0 34px; font: inherit; outline: none; }
 .search input:focus { border-color: var(--accent); background: var(--panel); box-shadow: 0 0 0 3px var(--accent-soft); }
 .search svg { position: absolute; left: 11px; top: 10px; color: var(--faint); }
@@ -229,6 +233,12 @@ dialog.dlg::backdrop { background: rgba(0,0,0,.35); }
 .dlg .err { color: #d4453b; font-size: 12.5px; margin: 8px 0 0; }
 
 .back { display: none; }
+@media (max-width: 1320px) {
+  header { gap: 10px; overflow-x: auto; scrollbar-width: none; }
+  header > .search { min-width: 160px; }
+  .ai-model { max-width: 130px; }
+  .seg button { padding: 5px 7px; }
+}
 @media (max-width: 1080px) {
   .app { grid-template-columns: 210px minmax(0, 1fr); }
   section.preview { display: none; }
@@ -290,7 +300,7 @@ const TOKEN = window.piWeb ? window.piWeb.token : (() => {
 const state = {
   sessions: [], current: null, model: null, connected: true, organize: { running: false }, error: "",
   titleMode: "ai", timeField: "modified", q: "", hits: null,
-  scope: { kind: "all" }, openProjects: new Set(), selected: null, collapsed: new Set(["零碎"]),
+  scope: { kind: "all" }, openProjects: new Set(), selected: null, collapsed: new Set(["frag"]),
   editing: false, tx: new Map(), pvKey: null, loaded: false, ai: null,
   aiModel: "", models: [],
 };
@@ -303,19 +313,158 @@ const apiUrl = path => "/api/sessions" + path.slice(4);
 async function api(path, body, signal, etag) {
   let res;
   try {
-    res = await fetch(apiUrl(path), body === undefined ? { headers: { "x-token": TOKEN, ...(etag ? { "if-none-match": etag } : {}) }, signal } : { method: "POST", headers: { "x-token": TOKEN, "content-type": "application/json" }, body: JSON.stringify(body), signal });
+    res = await fetch(apiUrl(path), body === undefined ? { headers: { "x-token": TOKEN, "x-lang": LANG, ...(etag ? { "if-none-match": etag } : {}) }, signal } : { method: "POST", headers: { "x-token": TOKEN, "x-lang": LANG, "content-type": "application/json" }, body: JSON.stringify(body), signal });
   } catch (e) {
-    if (e.name === "AbortError") throw e; throw Object.assign(new Error("连接不到 pi。pi 可能已经退出，在 pi 中运行 /sessions 重新打开。"), { offline: true }); }
+    if (e.name === "AbortError") throw e; throw Object.assign(new Error(L.offline), { offline: true }); }
   if (res.status === 304) return null;
   const data = await res.json().catch(() => ({}));
   if (etag !== undefined) data.etag = res.headers.get("etag");
-  if (!res.ok) throw Object.assign(new Error(data.error || "请求失败 " + res.status), { status: res.status });
+  if (!res.ok) throw Object.assign(new Error(data.error || L.requestFailed(res.status)), { status: res.status });
   return data;
 }
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const WD = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+// ---- Interface language (chosen by /hub.js: ?lang=, the page toggle, or the browser language) ----
+const LANG = window.piWeb && window.piWeb.lang === "en" ? "en" : "zh";
+document.documentElement.lang = LANG === "zh" ? "zh-CN" : "en";
+const L = {
+  zh: {
+    title: "pi 会话管理", brand: "会话", searchPh: "搜索内容，或 @项目 #标签 上周 8月",
+    askBtn: "✨ 用 AI 找", askTip: "用右侧选择的模型（默认跟随 pi）理解你的描述，在所有会话的标题和摘要中查找。会把你的描述和会话的标题、摘要、首句发送给该模型的服务商，每次 1 次模型请求。快捷键 Shift+Enter",
+    modelTip: "「用 AI 找」和「AI 整理」使用的模型（只列出 pi 中已配置登录或 API Key 的模型）",
+    titleTip: "标题", aiTitles: "整理后标题", rawTitles: "原始标题", timeTip: "按哪个时间", modified: "最后活动", created: "创建时间",
+    loading: "正在读取会话…", saveImage: "下载图片", close: "关闭",
+    offline: "连接不到 pi。pi 可能已经退出，在 pi 中运行 /sessions 重新打开。", requestFailed: n => "请求失败 " + n,
+    weekdays: ["周日", "周一", "周二", "周三", "周四", "周五", "周六"],
+    unknownDir: "未知目录", emptySession: "（空会话）",
+    qProject: "项目 ", qTag: "标签 ", qTime: "时间 ",
+    pinnedGroup: "📌 置顶", fragGroup: "零碎（1 条消息以内）",
+    organizing: (done, total) => `整理中 ${done}/${total} · 取消`, organizeN: n => `✨ AI 整理 ${n} 个会话`,
+    organizeCancelTip: "点击取消剩余的整理", organizeTip: m => `用 ${m} 为未整理的会话生成标题、摘要和标签`,
+    allSessions: "全部会话", active7: "最近 7 天活跃", pinned: "置顶", projects: "项目", last7: "最近 7 天", none: "暂无", tags: "标签", other: "其他", archived: "已归档", storage: "存储位置",
+    activeTip: "最近 7 天有活动", idleTip: "7 天未活动", current: "当前", msgs: n => `${n} 条`, archivedTag: "已归档",
+    aiSearch: "✨ AI 搜索", aiRelated: n => `${n} 个相关会话`, exitAi: "✕ 退出 AI 搜索",
+    aiThinking: m => `正在用 ${m} 理解你的描述…`, aiRanked: (m, n) => `由 ${m} 按相关度排序 · 看了 ${n} 个会话`, aiTokens: n => ` · 约 ${n} tokens`,
+    aiUnorganized: (n, button) => `其中 ${n} 个会话还没有摘要，只能根据标题和首句判断。${button}结果会更准。`, organizeFirst: "先 AI 整理",
+    aiNone: "没有找到相关会话", aiNoneHint: "换个说法，或补充项目、大概时间试试",
+    askEmpty: "先在搜索框里描述你要找的会话，例如：上周那个终端滚动的 bug", currentModel: "当前模型",
+    followPi: m => `跟随 pi${m ? "（" + m + "）" : "当前模型"}`,
+    closeEsc: "关闭 (Esc)", loadingShort: "正在读取…", openTip: "在文件管理器中打开", open: "打开",
+    defaultLoc: "默认位置", customLoc: "自定义位置", inUse: "pi 正在使用", nSessions: n => `${n} 个会话`, dirMissing: "目录不存在",
+    envLoc: "由环境变量 PI_SESSIONS_DATA_DIR 指定",
+    envFine: "要在这里修改，请先去掉环境变量 <code>PI_SESSIONS_DATA_DIR</code> 并重启 pi。",
+    movePh: "新位置，例如 ~/Dropbox/pi-sessions", moveHere: "移到这里",
+    moveFine: "现有数据会合并到新位置（那里已有的数据会保留），立即生效，不用重启 pi。原位置的文件会留着，确认没问题后可以自己删掉。访问令牌始终留在本机，不会移动。",
+    restoreDefault: "恢复默认位置", convFiles: "对话文件", convFilesSub: "由 pi 保存，插件只读取", howMove: "怎么换位置",
+    howP1: file => `在 pi 的设置文件 <code>${file}</code> 里加入这一项（目录换成你想要的）：`, copy: "复制",
+    howP2: "保存后重启 pi 生效，新目录会自动出现在上面的列表里。已有的对话不会自动搬过去，需要的话把旧目录里的内容手动移过去。也可以用启动参数 <code>pi --session-dir &lt;目录&gt;</code> 临时指定。",
+    extData: "插件数据", extDataSub: "AI 标题、摘要、标签、置顶、归档",
+    exportImages: "导出图片", exportImagesSub: "把会话里的图片存成单独的文件",
+    imagesIn: (n, m) => `共 ${n} 张图片，在 ${m} 个会话里`, noImages: "会话里还没有图片",
+    imgPh: "换个文件夹，例如 ~/Documents/pi-images", useExportDir: "设为导出位置",
+    imgFine: "每个会话一个子文件夹（日期_标题_会话 id），图片按出现顺序命名，例如 <code>001-用户.png</code>、<code>002-工具.png</code>。再次导出只会补上新增的图片，不会删除或改动已有文件。会话文件里的原图不受影响。",
+    exportAll: "导出全部会话的图片",
+    moveConfirm: label => `把插件数据移到 ${label}？\n\n· 现有的标题、摘要、标签等会合并过去，立即生效\n· 原位置的文件会保留`,
+    movedTo: p => "插件数据已移到 " + p, copied: "已复制", copyThis: "复制这一项：", exporting: "正在导出…", exportDirSet: p => "导出位置已设为 " + p,
+    exportNone: "没有可导出的图片", exported: n => `已导出 ${n} 张图片`, exportedAllOld: "（都已导出过）", exportedSome: w => `（新写入 ${w} 张，其余已导出过）`,
+    exportConfirm: (n, dir) => `把这个会话的 ${n} 张图片导出到：\n${dir}\n\n会放在以会话标题命名的子文件夹里，完成后自动打开。\n要换位置，点左栏「存储位置」。`,
+    searchResults: "搜索结果", noSessions: "还没有会话", noSessionsHint: "在 pi 里聊几句之后，会话会出现在这里",
+    noMatch: "没有找到会话", noMatchHint: "试试更短的关键词，或去掉 @项目 / 时间条件",
+    shotTip: "点击放大 / 下载", image: "图片", imageFailed: "[图片读取失败]",
+    copyMsgTip: "复制这条消息的原始 Markdown", copyAll: "复制全文",
+    toolFailed: "失败", toolNoResult: "无结果", args: "参数", output: "输出", empty: "（空）",
+    you: "你", thinking: "💭 思考过程",
+    loadFailed: e => `读取失败：${e}`, retry: "重试", loadingMore: "正在加载…", noMessages: "这个会话还没有消息",
+    allShown: n => `共 ${n} 条 · 已显示全部`, newMessages: "有新消息，刷新",
+    backToList: "← 返回列表", currentSession: "当前会话", firstLine: "原始首句：", noneParen: "（无）", manualTitle: " · 标题为手动命名", aiTitle: " · 标题由 AI 生成",
+    openInPi: "▶ 在 pi 中打开", copyCmd: "复制命令", rename: "重命名", unpin: "取消置顶", pin: "置顶", unarchive: "取消归档", archive: "归档",
+    exportTip: "把这个会话里的图片存成单独的文件", exportN: n => `🖼 导出图片（${n}）`, regenerate: "重新生成摘要", aiTitleBtn: "AI 生成标题",
+    focusTip: "隐藏会话列表，加宽对话区（Esc 退出）", exitFocus: "⤡ 退出专注", focus: "⤢ 专注阅读",
+    summary: "摘要", project: "项目", unknown: "未知", messages: "消息", forkedFrom: "分叉自",
+    conversation: "完整对话", conversationSub: "· 当前分支 · 工具调用可点开查看",
+    pickSession: "选择一个会话查看摘要和内容",
+    switchingBanner: "pi 正在切换会话，稍后会自动恢复。", tokenExpired: "页面令牌已失效：请在 pi 中运行 /sessions 重新打开。",
+    organizeConfirm: (m, n) => `将用 ${m} 为 ${n} 个会话生成标题、摘要和标签。\n\n· 每个会话的开头部分会发送给该模型的服务商\n· 每个会话一次模型请求，会产生额外用量\n\n继续？`,
+    alreadyCurrent: "已经是当前会话", copiedCmd: c => "已复制：" + c, copyCmdPrompt: "复制这条命令：",
+    unpinned: "已取消置顶", pinnedDone: "已置顶", unarchived: "已取消归档", archivedDone: "已归档（默认列表中隐藏，可在「已归档」里找到）",
+    organizeCancelled: "已取消剩余的整理", renamed: "已重命名，pi 的 /resume 里也会显示新标题",
+  },
+  en: {
+    title: "pi Sessions", brand: "Sessions", searchPh: "Search, or @project #tag last-week aug",
+    askBtn: "✨ Ask AI", askTip: "Uses the model chosen on the right (pi's by default) to understand your description and find sessions by title and summary. Sends your description and each session's title, summary and first line to that model's provider; one model request per search. Shortcut: Shift+Enter",
+    modelTip: "Model used by Ask AI and AI organize (only models with a login or API key in pi)",
+    titleTip: "Title", aiTitles: "AI titles", rawTitles: "Raw titles", timeTip: "Sort by", modified: "Last active", created: "Created",
+    loading: "Loading sessions…", saveImage: "Download image", close: "Close",
+    offline: "Cannot reach pi. It may have exited; run /sessions in pi to reopen this page.", requestFailed: n => "Request failed " + n,
+    weekdays: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+    unknownDir: "unknown folder", emptySession: "(empty session)",
+    qProject: "project ", qTag: "tag ", qTime: "time ",
+    pinnedGroup: "📌 Pinned", fragGroup: "Scraps (1 message or less)",
+    organizing: (done, total) => `Organizing ${done}/${total} · Cancel`, organizeN: n => `✨ Organize ${n}`,
+    organizeCancelTip: "Click to cancel the remaining jobs", organizeTip: m => `Use ${m} to write titles, summaries and tags for sessions not organized yet`,
+    allSessions: "All sessions", active7: "Active in 7 days", pinned: "Pinned", projects: "Projects", last7: "Last 7 days", none: "None yet", tags: "Tags", other: "Other", archived: "Archived", storage: "Storage",
+    activeTip: "Active in the last 7 days", idleTip: "Inactive for 7 days", current: "current", msgs: n => `${n} msgs`, archivedTag: "archived",
+    aiSearch: "✨ AI search", aiRelated: n => `${n} related sessions`, exitAi: "✕ Exit AI search",
+    aiThinking: m => `Asking ${m} to understand your description…`, aiRanked: (m, n) => `Ranked by ${m} · looked at ${n} sessions`, aiTokens: n => ` · about ${n} tokens`,
+    aiUnorganized: (n, button) => `${n} of them have no summary yet, so only titles and first lines were used. ${button} for better results.`, organizeFirst: "AI organize first",
+    aiNone: "No related sessions found", aiNoneHint: "Try other words, or add a project or a rough time",
+    askEmpty: "Describe the session in the search box first, e.g. the terminal scrolling bug from last week", currentModel: "current model",
+    followPi: m => m ? `Follow pi (${m})` : "Follow pi's current model",
+    closeEsc: "Close (Esc)", loadingShort: "Loading…", openTip: "Open in the file manager", open: "Open",
+    defaultLoc: "Default location", customLoc: "Custom location", inUse: "in use by pi", nSessions: n => `${n} sessions`, dirMissing: "folder missing",
+    envLoc: "Set by the PI_SESSIONS_DATA_DIR environment variable",
+    envFine: "To change it here, remove the <code>PI_SESSIONS_DATA_DIR</code> environment variable and restart pi.",
+    movePh: "New location, e.g. ~/Dropbox/pi-sessions", moveHere: "Move here",
+    moveFine: "Existing data is merged into the new location (data already there is kept) and takes effect immediately, no restart needed. Files in the old location stay; delete them yourself once everything looks right. The access token always stays on this machine.",
+    restoreDefault: "Restore default location", convFiles: "Conversation files", convFilesSub: "saved by pi, only read here", howMove: "How to change the location",
+    howP1: file => `Add this to pi's settings file <code>${file}</code> (use the folder you want):`, copy: "Copy",
+    howP2: "Restart pi after saving; the new folder then shows up in the list above. Existing conversations are not moved; move the old folder's contents yourself if needed. You can also use <code>pi --session-dir &lt;folder&gt;</code> for a single run.",
+    extData: "Extension data", extDataSub: "AI titles, summaries, tags, pins, archive",
+    exportImages: "Export images", exportImagesSub: "save images from sessions as separate files",
+    imagesIn: (n, m) => `${n} images in ${m} sessions`, noImages: "no images in sessions yet",
+    imgPh: "Another folder, e.g. ~/Documents/pi-images", useExportDir: "Use as export folder",
+    imgFine: "One subfolder per session (date_title_session id); images are numbered in order, e.g. <code>001-user.png</code>, <code>002-tool.png</code>. Exporting again only adds new images and never deletes or changes existing files. The images inside session files are untouched.",
+    exportAll: "Export images from all sessions",
+    moveConfirm: label => `Move the extension data to ${label}?\n\n· Existing titles, summaries, tags and so on are merged there and take effect immediately\n· Files in the old location are kept`,
+    movedTo: p => "Extension data moved to " + p, copied: "Copied", copyThis: "Copy this:", exporting: "Exporting…", exportDirSet: p => "Export folder set to " + p,
+    exportNone: "No images to export", exported: n => `Exported ${n} images`, exportedAllOld: " (all exported before)", exportedSome: w => ` (${w} new, the rest exported before)`,
+    exportConfirm: (n, dir) => `Export this session's ${n} images to:\n${dir}\n\nThey go into a subfolder named after the session, and the folder opens when done.\nTo change the location, click "Storage" on the left.`,
+    searchResults: "Search results", noSessions: "No sessions yet", noSessionsHint: "Sessions appear here after you chat in pi",
+    noMatch: "No sessions found", noMatchHint: "Try shorter keywords, or drop @project / time filters",
+    shotTip: "Click to enlarge / download", image: "image", imageFailed: "[image failed to load]",
+    copyMsgTip: "Copy this message's original Markdown", copyAll: "Copy all",
+    toolFailed: "failed", toolNoResult: "no result", args: "Arguments", output: "Output", empty: "(empty)",
+    you: "You", thinking: "💭 Thinking",
+    loadFailed: e => `Failed to load: ${e}`, retry: "Retry", loadingMore: "Loading…", noMessages: "This session has no messages yet",
+    allShown: n => `${n} messages · all shown`, newMessages: "New messages, refresh",
+    backToList: "← Back to list", currentSession: "Current session", firstLine: "First line: ", noneParen: "(none)", manualTitle: " · title set by hand", aiTitle: " · title by AI",
+    openInPi: "▶ Open in pi", copyCmd: "Copy command", rename: "Rename", unpin: "Unpin", pin: "Pin", unarchive: "Unarchive", archive: "Archive",
+    exportTip: "Save this session's images as separate files", exportN: n => `🖼 Export images (${n})`, regenerate: "Regenerate summary", aiTitleBtn: "AI title",
+    focusTip: "Hide the list and widen the conversation (Esc to exit)", exitFocus: "⤡ Exit focus", focus: "⤢ Focus",
+    summary: "Summary", project: "Project", unknown: "unknown", messages: "Messages", forkedFrom: "Forked from",
+    conversation: "Conversation", conversationSub: "· current branch · click a tool call to expand it",
+    pickSession: "Select a session to see its summary and conversation",
+    switchingBanner: "pi is switching sessions; this recovers automatically.", tokenExpired: "The page token is no longer valid; run /sessions in pi to reopen the page.",
+    organizeConfirm: (m, n) => `Use ${m} to write titles, summaries and tags for ${n} sessions?\n\n· The start of each session is sent to that model's provider\n· One model request per session, which adds usage`,
+    alreadyCurrent: "This is already the current session", copiedCmd: c => "Copied: " + c, copyCmdPrompt: "Copy this command:",
+    unpinned: "Unpinned", pinnedDone: "Pinned", unarchived: "Unarchived", archivedDone: "Archived (hidden from the default list; find it under Archived)",
+    organizeCancelled: "Cancelled the remaining jobs", renamed: "Renamed; pi's /resume shows the new title too",
+  },
+}[LANG];
+function applyStatic() {
+  document.title = L.title;
+  document.querySelector(".brand-name").textContent = L.brand;
+  $("q").placeholder = L.searchPh;
+  $("ask").textContent = L.askBtn; $("ask").title = L.askTip;
+  $("aiModel").title = L.modelTip; $("aiModel").options[0].textContent = L.followPi("");
+  $("titleSeg").title = L.titleTip; $("titleSeg").children[0].textContent = L.aiTitles; $("titleSeg").children[1].textContent = L.rawTitles;
+  $("timeSeg").title = L.timeTip; $("timeSeg").children[0].textContent = L.modified; $("timeSeg").children[1].textContent = L.created;
+  $("list").querySelector(".empty").textContent = L.loading;
+  $("imgview-save").textContent = L.saveImage; document.querySelector("#imgview [data-close]").textContent = L.close;
+}
+applyStatic();
+const WD = L.weekdays;
 const pad = n => String(n).padStart(2, "0");
 const DAY = 864e5;
 function startOfDay(t) { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); }
@@ -324,10 +473,10 @@ function dayKey(t) { const d = new Date(t), y = new Date().getFullYear(); return
 function monthKey(t) { const d = new Date(t); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; }
 // Windows paths are case-insensitive and may use either slash.
 const norm = p => { const s = String(p || "").replace(/[\\/]+$/, ""); return /^[a-z]:[\\/]/i.test(s) ? s.replace(/\//g, "\\").toLowerCase() : s; };
-function projName(cwd) { if (!cwd) return "未知目录"; if (state.home && norm(cwd) === norm(state.home)) return "~ (home)"; return cwd.split(/[\\/]/).filter(Boolean).pop(); }
+function projName(cwd) { if (!cwd) return L.unknownDir; if (state.home && norm(cwd) === norm(state.home)) return "~ (home)"; return cwd.split(/[\\/]/).filter(Boolean).pop(); }
 function tilde(p) { const h = state.home; if (h && norm(p).startsWith(norm(h)) && /^([\\/]|$)/.test(p.slice(h.length))) return "~" + p.slice(h.length); return p; }
 const T = s => new Date(s[state.timeField]).getTime();
-const rawTitle = s => s.name || s.firstUser || "（空会话）";
+const rawTitle = s => s.name || s.firstUser || L.emptySession;
 const title = s => state.titleMode === "ai" ? (s.meta.title || rawTitle(s)) : rawTitle(s);
 const tags = s => s.meta.tags || [];
 const active = s => Date.now() - new Date(s.modified).getTime() < 7 * DAY;
@@ -335,22 +484,33 @@ const isCurrent = s => s.path === state.current;
 const needsOrganize = s => !s.meta.organizedAt && s.count >= 2;
 
 // ---- 搜索：自由文本（服务端全文） + @项目 + #标签 + 时间词 ----
+const MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+/** "aug" or "august" → 8; at least three letters, so words like "a" or "ma" stay search words. */
+const monthNamed = word => word.length >= 3 ? MONTH_NAMES.findIndex(n => n.startsWith(word)) + 1 : 0;
 function parseQuery(q) {
   const out = { words: [], proj: [], tags: [], range: null, labels: [] }, now = Date.now(), today = startOfDay(now);
   const wd = (new Date(today).getDay() + 6) % 7, weekStart = today - wd * DAY, d = new Date(today);
+  const thisMonth = [new Date(d.getFullYear(), d.getMonth(), 1).getTime(), now + DAY], lastMonth = [new Date(d.getFullYear(), d.getMonth() - 1, 1).getTime(), new Date(d.getFullYear(), d.getMonth(), 1).getTime()];
+  // Time words work in both languages, whatever the page language.
   const times = {
     "今天": [today, now + DAY], "昨天": [today - DAY, today], "前天": [today - 2 * DAY, today - DAY],
     "本周": [weekStart, now + DAY], "这周": [weekStart, now + DAY], "上周": [weekStart - 7 * DAY, weekStart],
-    "本月": [new Date(d.getFullYear(), d.getMonth(), 1).getTime(), now + DAY], "上个月": [new Date(d.getFullYear(), d.getMonth() - 1, 1).getTime(), new Date(d.getFullYear(), d.getMonth(), 1).getTime()],
+    "本月": thisMonth, "上个月": lastMonth,
+    "today": [today, now + DAY], "yesterday": [today - DAY, today], "this-week": [weekStart, now + DAY], "last-week": [weekStart - 7 * DAY, weekStart],
+    "this-month": thisMonth, "last-month": lastMonth,
   };
+  const monthRange = (y, m) => [new Date(y, m - 1, 1).getTime(), new Date(y, m, 1).getTime()];
   for (const tok of q.trim().split(/\s+/).filter(Boolean)) {
-    if (tok.startsWith("@") && tok.length > 1) { out.proj.push(tok.slice(1).toLowerCase()); out.labels.push("项目 " + tok.slice(1)); continue; }
-    if (tok.startsWith("#") && tok.length > 1) { out.tags.push(tok.slice(1).toLowerCase()); out.labels.push("标签 " + tok); continue; }
-    if (times[tok]) { out.range = times[tok]; out.labels.push("时间 " + tok); continue; }
-    const m = tok.match(/^(?:(\d{4})[-年])?(\d{1,2})月$/);
-    if (m && +m[2] >= 1 && +m[2] <= 12) { const y = m[1] ? +m[1] : new Date().getFullYear(), s = new Date(y, +m[2] - 1, 1).getTime(), e = new Date(y, +m[2], 1).getTime(); out.range = [s, e]; out.labels.push(`时间 ${y}-${pad(+m[2])}`); continue; }
+    if (tok.startsWith("@") && tok.length > 1) { out.proj.push(tok.slice(1).toLowerCase()); out.labels.push(L.qProject + tok.slice(1)); continue; }
+    if (tok.startsWith("#") && tok.length > 1) { out.tags.push(tok.slice(1).toLowerCase()); out.labels.push(L.qTag + tok); continue; }
+    const word = tok.toLowerCase();
+    if (times[word]) { out.range = times[word]; out.labels.push(L.qTime + tok); continue; }
+    // 8月, 2026年8月, 2026-08, aug, august
+    const named = monthNamed(word);
+    const m = tok.match(/^(?:(\d{4})[-年])?(\d{1,2})月$/) ?? tok.match(/^(\d{4})-(\d{1,2})$/) ?? (named ? [tok, "", String(named)] : null);
+    if (m && +m[2] >= 1 && +m[2] <= 12) { const y = m[1] ? +m[1] : new Date().getFullYear(); out.range = monthRange(y, +m[2]); out.labels.push(`${L.qTime}${y}-${pad(+m[2])}`); continue; }
     const md = tok.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-    if (md) { const s = new Date(+md[1], +md[2] - 1, +md[3]).getTime(); out.range = [s, s + DAY]; out.labels.push("时间 " + tok); continue; }
+    if (md) { const s = new Date(+md[1], +md[2] - 1, +md[3]).getTime(); out.range = [s, s + DAY]; out.labels.push(L.qTime + tok); continue; }
     out.words.push(tok.toLowerCase());
   }
   return out;
@@ -417,8 +577,8 @@ function groups(list) {
     if (!byKey.has(b.key)) { const g = { key: b.key, label: b.label, items: [] }; byKey.set(b.key, g); out.push(g); }
     byKey.get(b.key).items.push(s);
   }
-  if (pinned.length) out.unshift({ key: "置顶", label: "📌 置顶", items: pinned });
-  if (frag.length) out.push({ key: "零碎", label: "零碎（1 条消息以内）", items: frag });
+  if (pinned.length) out.unshift({ key: "pinned", label: L.pinnedGroup, items: pinned });
+  if (frag.length) out.push({ key: "frag", label: L.fragGroup, items: frag });
   return out;
 }
 
@@ -429,8 +589,8 @@ function renderHeader() {
   const o = state.organize, b = $("organize"), pending = state.sessions.filter(needsOrganize).length;
   b.hidden = !o.running && !pending;
   b.classList.toggle("primary", !o.running);
-  b.textContent = o.running ? `整理中 ${o.done + o.failed}/${o.total} · 取消` : `✨ AI 整理 ${pending} 个会话`;
-  b.title = o.running ? "点击取消剩余的整理" : `用 ${aiModelName()} 为未整理的会话生成标题、摘要和标签`;
+  b.textContent = o.running ? L.organizing(o.done + o.failed, o.total) : L.organizeN(pending);
+  b.title = o.running ? L.organizeCancelTip : L.organizeTip(aiModelName());
 }
 function renderSide() {
   const list = state.sessions, live = list.filter(s => !s.meta.archived);
@@ -439,10 +599,10 @@ function renderSide() {
   const projs = [...byProj.entries()].sort((a, b) => Math.max(...b[1].map(T)) - Math.max(...a[1].map(T)));
   const sc = state.scope, on = (k, extra = true) => sc.kind === k && extra ? " on" : "";
   const scope = o => esc(JSON.stringify(o));
-  let h = `<button class="nav${on("all")}" data-scope="${scope({ kind: "all" })}"><span class="ico">≡</span><span class="name">全部会话</span><span class="cnt">${live.length}</span></button>
-  <button class="nav${on("active")}" data-scope="${scope({ kind: "active" })}"><span class="ico" style="color:var(--ok)">●</span><span class="name">最近 7 天活跃</span><span class="cnt">${live.filter(active).length}</span></button>
-  <button class="nav${on("pinned")}" data-scope="${scope({ kind: "pinned" })}"><span class="ico">📌</span><span class="name">置顶</span><span class="cnt">${live.filter(s => s.meta.pinned).length}</span></button>
-  <div class="nav-label">项目</div>`;
+  let h = `<button class="nav${on("all")}" data-scope="${scope({ kind: "all" })}"><span class="ico">≡</span><span class="name">${esc(L.allSessions)}</span><span class="cnt">${live.length}</span></button>
+  <button class="nav${on("active")}" data-scope="${scope({ kind: "active" })}"><span class="ico" style="color:var(--ok)">●</span><span class="name">${esc(L.active7)}</span><span class="cnt">${live.filter(active).length}</span></button>
+  <button class="nav${on("pinned")}" data-scope="${scope({ kind: "pinned" })}"><span class="ico">📌</span><span class="name">${esc(L.pinned)}</span><span class="cnt">${live.filter(s => s.meta.pinned).length}</span></button>
+  <div class="nav-label">${esc(L.projects)}</div>`;
   for (const [cwd, items] of projs) {
     const open = state.openProjects.has(cwd);
     h += `<button class="nav${on("project", sc.cwd === cwd)}" data-scope="${scope({ kind: "project", cwd })}" data-toggle="${esc(cwd)}" title="${esc(tilde(cwd))}">
@@ -450,57 +610,57 @@ function renderSide() {
     if (open) {
       const bs = new Map(); let recent = 0;
       for (const s of items) { const b = bucketOf(s); if (b.day) recent++; else bs.set(b.key, (bs.get(b.key) || 0) + 1); }
-      if (recent) h += `<button class="nav sub${on("bucket", sc.cwd === cwd && sc.key === "recent")}" data-scope="${scope({ kind: "bucket", cwd, key: "recent" })}"><span class="name">最近 7 天</span><span class="cnt">${recent}</span></button>`;
+      if (recent) h += `<button class="nav sub${on("bucket", sc.cwd === cwd && sc.key === "recent")}" data-scope="${scope({ kind: "bucket", cwd, key: "recent" })}"><span class="name">${esc(L.last7)}</span><span class="cnt">${recent}</span></button>`;
       for (const [k, n] of [...bs.entries()].sort((a, b) => b[0].localeCompare(a[0])))
         h += `<button class="nav sub${on("bucket", sc.cwd === cwd && sc.key === k)}" data-scope="${scope({ kind: "bucket", cwd, key: k })}"><span class="name">${esc(k.slice(2))}</span><span class="cnt">${n}</span></button>`;
     }
   }
-  if (!projs.length) h += `<div class="hint" style="padding:4px 10px">暂无</div>`;
+  if (!projs.length) h += `<div class="hint" style="padding:4px 10px">${esc(L.none)}</div>`;
   const tagCount = new Map(); for (const s of live) for (const t of tags(s)) tagCount.set(t, (tagCount.get(t) || 0) + 1);
-  if (tagCount.size) h += `<div class="nav-label">标签</div><div style="display:flex;flex-wrap:wrap;gap:6px;padding:4px 10px">` +
+  if (tagCount.size) h += `<div class="nav-label">${esc(L.tags)}</div><div style="display:flex;flex-wrap:wrap;gap:6px;padding:4px 10px">` +
     [...tagCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 16).map(([t, n]) => `<button class="chip" data-tag="${esc(t)}">#${esc(t)} <span class="num" style="font-size:11px;opacity:.7">${n}</span></button>`).join("") + `</div>`;
-  h += `<div class="nav-label">其他</div><button class="nav${on("archived")}" data-scope="${scope({ kind: "archived" })}"><span class="ico">🗄</span><span class="name">已归档</span><span class="cnt">${list.filter(s => s.meta.archived).length}</span></button>`;
-  h += `<button class="nav" data-storage><span class="ico">📁</span><span class="name">存储位置</span></button>`;
+  h += `<div class="nav-label">${esc(L.other)}</div><button class="nav${on("archived")}" data-scope="${scope({ kind: "archived" })}"><span class="ico">🗄</span><span class="name">${esc(L.archived)}</span><span class="cnt">${list.filter(s => s.meta.archived).length}</span></button>`;
+  h += `<button class="nav" data-storage><span class="ico">📁</span><span class="name">${esc(L.storage)}</span></button>`;
   $("side").innerHTML = h;
 }
 function scopeTitle() {
   const sc = state.scope;
   if (sc.kind === "project") return projName(sc.cwd);
-  if (sc.kind === "bucket") return projName(sc.cwd) + " · " + (sc.key === "recent" ? "最近 7 天" : sc.key.slice(2));
-  return { all: "全部会话", active: "最近 7 天活跃", pinned: "置顶", archived: "已归档" }[sc.kind];
+  if (sc.kind === "bucket") return projName(sc.cwd) + " · " + (sc.key === "recent" ? L.last7 : sc.key.slice(2));
+  return { all: L.allSessions, active: L.active7, pinned: L.pinned, archived: L.archived }[sc.kind];
 }
 function card(s, pq, showProj, line) {
   const snip = pq.words.length ? state.hits?.get(s.id) : null, sum = snip || s.meta.summary || (state.titleMode === "ai" && s.meta.title ? s.firstUser : "");
   const raw = !(state.titleMode === "ai" && s.meta.title) && !s.name;
   return `<button class="card${state.selected === s.id ? " on" : ""}" data-id="${esc(s.id)}">
-    <div class="row1"><span class="dot${active(s) ? " active" : ""}" title="${active(s) ? "最近 7 天有活动" : "7 天未活动"}"></span>
+    <div class="row1"><span class="dot${active(s) ? " active" : ""}" title="${active(s) ? L.activeTip : L.idleTip}"></span>
       <span class="title${raw ? " raw" : ""}">${highlight(title(s), pq.words)}</span>
-      ${isCurrent(s) ? `<span class="chip" style="font-size:11px">当前</span>` : ""}
+      ${isCurrent(s) ? `<span class="chip" style="font-size:11px">${esc(L.current)}</span>` : ""}
       ${s.meta.pinned ? `<span class="pin">📌</span>` : ""}
       <span class="time num">${fmtFull(T(s))}</span></div>
     ${line ? `<div class="reason">✨ ${esc(line)}</div>` : ""}
     ${sum ? `<div class="summary">${highlight(sum, pq.words)}</div>` : ""}
-    <div class="meta">${showProj ? `<span class="proj">${esc(projName(s.cwd))}</span>` : ""}<span class="num">${s.count} 条</span>${tags(s).map(t => `<span class="tag">#${esc(t)}</span>`).join("")}${s.meta.archived ? `<span>已归档</span>` : ""}</div>
+    <div class="meta">${showProj ? `<span class="proj">${esc(projName(s.cwd))}</span>` : ""}<span class="num">${esc(L.msgs(s.count))}</span>${tags(s).map(t => `<span class="tag">#${esc(t)}</span>`).join("")}${s.meta.archived ? `<span>${esc(L.archivedTag)}</span>` : ""}</div>
   </button>`;
 }
 function aiList() {
   const ai = state.ai, none = { words: [] };
   const items = (ai.results || []).map(r => [state.sessions.find(s => s.id === r.id), r.reason]).filter(x => x[0]);
-  let h = `<div class="list-head"><h2>✨ AI 搜索</h2><span class="sub">${ai.loading ? "" : items.length + " 个相关会话"}</span>
-    <button class="btn" data-ai="exit" style="margin-left:auto;height:26px;font-size:12px">✕ 退出 AI 搜索</button>
+  let h = `<div class="list-head"><h2>${esc(L.aiSearch)}</h2><span class="sub">${ai.loading ? "" : esc(L.aiRelated(items.length))}</span>
+    <button class="btn" data-ai="exit" style="margin-left:auto;height:26px;font-size:12px">${esc(L.exitAi)}</button>
     <div class="chips"><span class="chip">${esc(ai.query)}</span></div>
-    <div class="ai-status">${ai.loading ? `<span class="spin"></span>正在用 ${esc(aiModelName())} 理解你的描述…` :
-      ai.error ? "" : `由 ${esc(ai.model)} 按相关度排序 · 看了 ${ai.candidates} 个会话${ai.usage ? ` · 约 ${(ai.usage.input + ai.usage.output).toLocaleString()} tokens` : ""}`}
-    ${!ai.loading && ai.unorganized ? `<br>其中 ${ai.unorganized} 个会话还没有摘要，只能根据标题和首句判断。<button data-ai="organize">先 AI 整理</button>结果会更准。` : ""}</div></div>`;
+    <div class="ai-status">${ai.loading ? `<span class="spin"></span>${esc(L.aiThinking(aiModelName()))}` :
+      ai.error ? "" : esc(L.aiRanked(ai.model, ai.candidates) + (ai.usage ? L.aiTokens((ai.usage.input + ai.usage.output).toLocaleString()) : ""))}
+    ${!ai.loading && ai.unorganized ? `<br>${L.aiUnorganized(ai.unorganized, `<button data-ai="organize">${esc(L.organizeFirst)}</button>`)}` : ""}</div></div>`;
   if (ai.error) h += `<div class="empty">${esc(ai.error)}</div>`;
-  else if (!ai.loading && !items.length) h += `<div class="empty">没有找到相关会话<br><span style="font-size:12.5px">换个说法，或补充项目、大概时间试试</span></div>`;
+  else if (!ai.loading && !items.length) h += `<div class="empty">${esc(L.aiNone)}<br><span style="font-size:12.5px">${esc(L.aiNoneHint)}</span></div>`;
   h += `<div class="group">` + items.map(([s, reason]) => card(s, none, true, reason)).join("") + `</div>`;
   return h;
 }
 let askAbort;
 async function ask() {
   const query = state.q.trim();
-  if (!query) { $("q").focus(); toast("先在搜索框里描述你要找的会话，例如：上周那个终端滚动的 bug"); return; }
+  if (!query) { $("q").focus(); toast(L.askEmpty); return; }
   askAbort?.abort(); askAbort = new AbortController();
   const signal = askAbort.signal;
   state.ai = { query, loading: true }; renderList();
@@ -516,7 +676,7 @@ async function ask() {
   renderList(); renderPreview();
 }
 function aiModelName() {
-  return state.aiModel ? state.models.find(m => m.key === state.aiModel)?.name || state.aiModel : state.model || "当前模型";
+  return state.aiModel ? state.models.find(m => m.key === state.aiModel)?.name || state.aiModel : state.model || L.currentModel;
 }
 async function loadModels() {
   try { const r = await api("/api/models"); if (!r?.models) return; state.models = r.models; } catch { return; }
@@ -529,7 +689,7 @@ function renderAskModel() {
   if (sel === document.activeElement) return;
   const opt = (v, label) => `<option value="${esc(v)}"${v === state.aiModel ? " selected" : ""}>${esc(label)}</option>`;
   const multi = new Set(state.models.map(m => m.provider)).size > 1;
-  sel.innerHTML = opt("", `跟随 pi${state.model ? "（" + state.model + "）" : "当前模型"}`) + state.models.map(m => opt(m.key, multi ? `${m.name} · ${m.provider}` : m.name)).join("");
+  sel.innerHTML = opt("", L.followPi(state.model)) + state.models.map(m => opt(m.key, multi ? `${m.name} · ${m.provider}` : m.name)).join("");
 }
 // ---- Storage locations ----
 const SESSION_DIR_EXAMPLE = '{ "sessionDir": "~/Documents/pi-sessions" }';
@@ -541,40 +701,40 @@ async function openStorage() {
   renderStorage();
 }
 function renderStorage(error = "", imgError = "") {
-  const st = state.storage, head = `<div class="dlg-head"><h2>存储位置</h2><button data-st="close" title="关闭 (Esc)">✕</button></div>`;
-  if (!st) { $("storage").innerHTML = head + `<div class="empty">正在读取…</div>`; return; }
+  const st = state.storage, head = `<div class="dlg-head"><h2>${esc(L.storage)}</h2><button data-st="close" title="${esc(L.closeEsc)}">✕</button></div>`;
+  if (!st) { $("storage").innerHTML = head + `<div class="empty">${esc(L.loadingShort)}</div>`; return; }
   if (st.error) { $("storage").innerHTML = head + `<div class="empty">${esc(st.error)}</div>`; return; }
-  const openBtn = (p, ok = true) => ok ? `<button class="btn" data-st="open" data-path="${esc(p)}" title="在文件管理器中打开">打开</button>` : "";
+  const openBtn = (p, ok = true) => ok ? `<button class="btn" data-st="open" data-path="${esc(p)}" title="${esc(L.openTip)}">${esc(L.open)}</button>` : "";
   const dirs = st.sessions.dirs.map(d => `<div class="loc"><div><div class="path">${esc(tilde(d.path))}</div>
-    <div class="loc-meta">${[d.isDefault ? "默认位置" : "自定义位置", d.current ? "<b>pi 正在使用</b>" : "", d.exists ? `${d.count} 个会话` : "目录不存在"].filter(Boolean).join(" · ")}</div></div>${openBtn(d.path, d.exists)}</div>`).join("");
-  const data = st.data, where = { default: "默认位置", config: "自定义位置", env: "由环境变量 PI_SESSIONS_DATA_DIR 指定" }[data.source];
+    <div class="loc-meta">${[esc(d.isDefault ? L.defaultLoc : L.customLoc), d.current ? `<b>${esc(L.inUse)}</b>` : "", esc(d.exists ? L.nSessions(d.count) : L.dirMissing)].filter(Boolean).join(" · ")}</div></div>${openBtn(d.path, d.exists)}</div>`).join("");
+  const data = st.data, where = esc({ default: L.defaultLoc, config: L.customLoc, env: L.envLoc }[data.source]);
   let move = "";
-  if (data.source === "env") move = `<p class="fine">要在这里修改，请先去掉环境变量 <code>PI_SESSIONS_DATA_DIR</code> 并重启 pi。</p>`;
-  else if (data.movable) move = `<form class="move" id="moveForm"><input id="moveDir" placeholder="新位置，例如 ~/Dropbox/pi-sessions" autocomplete="off" spellcheck="false"><button class="btn primary">移到这里</button></form>
+  if (data.source === "env") move = `<p class="fine">${L.envFine}</p>`;
+  else if (data.movable) move = `<form class="move" id="moveForm"><input id="moveDir" placeholder="${esc(L.movePh)}" autocomplete="off" spellcheck="false"><button class="btn primary">${esc(L.moveHere)}</button></form>
     ${error ? `<p class="err">${esc(error)}</p>` : ""}
-    <p class="fine">现有数据会合并到新位置（那里已有的数据会保留），立即生效，不用重启 pi。原位置的文件会留着，确认没问题后可以自己删掉。访问令牌始终留在本机，不会移动。${data.source === "config" ? ` <button data-st="reset">恢复默认位置</button>` : ""}</p>`;
+    <p class="fine">${esc(L.moveFine)}${data.source === "config" ? ` <button data-st="reset">${esc(L.restoreDefault)}</button>` : ""}</p>`;
   $("storage").innerHTML = head + `
-    <section><h3>对话文件<span class="sub">由 pi 保存，插件只读取</span></h3>${dirs}
-      <details class="how"><summary>怎么换位置</summary>
-        <p>在 pi 的设置文件 <code>${esc(tilde(st.sessions.settingsFile || "~/.pi/agent/settings.json"))}</code> 里加入这一项（目录换成你想要的）：</p>
-        <pre><span>${esc(SESSION_DIR_EXAMPLE)}</span><button data-st="copy">复制</button></pre>
-        <p>保存后重启 pi 生效，新目录会自动出现在上面的列表里。已有的对话不会自动搬过去，需要的话把旧目录里的内容手动移过去。也可以用启动参数 <code>pi --session-dir &lt;目录&gt;</code> 临时指定。</p>
+    <section><h3>${esc(L.convFiles)}<span class="sub">${esc(L.convFilesSub)}</span></h3>${dirs}
+      <details class="how"><summary>${esc(L.howMove)}</summary>
+        <p>${L.howP1(esc(tilde(st.sessions.settingsFile || "~/.pi/agent/settings.json")))}</p>
+        <pre><span>${esc(SESSION_DIR_EXAMPLE)}</span><button data-st="copy">${esc(L.copy)}</button></pre>
+        <p>${L.howP2}</p>
       </details></section>
-    <section><h3>插件数据<span class="sub">AI 标题、摘要、标签、置顶、归档</span></h3>
+    <section><h3>${esc(L.extData)}<span class="sub">${esc(L.extDataSub)}</span></h3>
       <div class="loc"><div><div class="path">${esc(tilde(data.dir))}</div><div class="loc-meta">${where}</div></div>${openBtn(data.dir)}</div>${move}</section>
-    <section><h3>导出图片<span class="sub">把会话里的图片存成单独的文件</span></h3>
-      <div class="loc"><div><div class="path">${esc(tilde(st.images.dir))}</div><div class="loc-meta">${st.images.isDefault ? "默认位置" : "自定义位置"} · ${st.images.count ? `共 ${st.images.count} 张图片，在 ${st.images.sessions} 个会话里` : "会话里还没有图片"}</div></div>${openBtn(st.images.dir, st.images.exists)}</div>
-      <form class="move" id="imgForm"><input id="imgDir" placeholder="换个文件夹，例如 ~/Documents/pi-images" autocomplete="off" spellcheck="false"><button class="btn">设为导出位置</button></form>
+    <section><h3>${esc(L.exportImages)}<span class="sub">${esc(L.exportImagesSub)}</span></h3>
+      <div class="loc"><div><div class="path">${esc(tilde(st.images.dir))}</div><div class="loc-meta">${esc(st.images.isDefault ? L.defaultLoc : L.customLoc)} · ${esc(st.images.count ? L.imagesIn(st.images.count, st.images.sessions) : L.noImages)}</div></div>${openBtn(st.images.dir, st.images.exists)}</div>
+      <form class="move" id="imgForm"><input id="imgDir" placeholder="${esc(L.imgPh)}" autocomplete="off" spellcheck="false"><button class="btn">${esc(L.useExportDir)}</button></form>
       ${imgError ? `<p class="err">${esc(imgError)}</p>` : ""}
-      <p class="fine">每个会话一个子文件夹（日期_标题_会话 id），图片按出现顺序命名，例如 <code>001-用户.png</code>、<code>002-工具.png</code>。再次导出只会补上新增的图片，不会删除或改动已有文件。会话文件里的原图不受影响。${st.images.isDefault ? "" : ` <button data-st="img-reset">恢复默认位置</button>`}</p>
-      ${st.images.count ? `<button class="btn primary" data-st="export-all">导出全部会话的图片</button>` : ""}</section>`;
+      <p class="fine">${L.imgFine}${st.images.isDefault ? "" : ` <button data-st="img-reset">${esc(L.restoreDefault)}</button>`}</p>
+      ${st.images.count ? `<button class="btn primary" data-st="export-all">${esc(L.exportAll)}</button>` : ""}</section>`;
 }
 async function moveData(dir) {
   const label = dir || tilde(state.storage.data.defaultDir);
-  if (!confirm(`把插件数据移到 ${label}？\n\n· 现有的标题、摘要、标签等会合并过去，立即生效\n· 原位置的文件会保留`)) return;
+  if (!confirm(L.moveConfirm(label))) return;
   try {
     state.storage = await api("/api/storage/data", { dir });
-    renderStorage(); toast("插件数据已移到 " + tilde(state.storage.data.dir)); refresh();
+    renderStorage(); toast(L.movedTo(tilde(state.storage.data.dir))); refresh();
   } catch (e) { renderStorage(e.message); if (dir) $("moveDir").value = dir; }
 }
 $("storage").addEventListener("click", async e => {
@@ -583,24 +743,24 @@ $("storage").addEventListener("click", async e => {
   const a = b.dataset.st;
   if (a === "close") $("storage").close();
   if (a === "open") { try { await api("/api/storage/open", { path: b.dataset.path }); } catch (err) { toast(err.message); } }
-  if (a === "copy") { try { await navigator.clipboard.writeText(SESSION_DIR_EXAMPLE); toast("已复制"); } catch { prompt("复制这一项：", SESSION_DIR_EXAMPLE); } }
+  if (a === "copy") { try { await navigator.clipboard.writeText(SESSION_DIR_EXAMPLE); toast(L.copied); } catch { prompt(L.copyThis, SESSION_DIR_EXAMPLE); } }
   if (a === "reset") moveData("");
   if (a === "img-reset") setImageDir("");
   if (a === "export-all") {
-    b.disabled = true; b.innerHTML = `<span class="spin"></span>正在导出…`;
+    b.disabled = true; b.innerHTML = `<span class="spin"></span>${esc(L.exporting)}`;
     try { toast(exportedMsg(await api("/api/images/export", { reveal: true }))); } catch (err) { toast(err.message); }
     openStorage();
   }
 });
 async function setImageDir(dir) {
-  try { state.storage = await api("/api/storage/images", { dir }); renderStorage(); toast("导出位置已设为 " + tilde(state.storage.images.dir)); }
+  try { state.storage = await api("/api/storage/images", { dir }); renderStorage(); toast(L.exportDirSet(tilde(state.storage.images.dir))); }
   catch (e) { renderStorage("", e.message); if (dir) $("imgDir").value = dir; }
 }
-const exportedMsg = r => !r.images ? "没有可导出的图片" : `已导出 ${r.images} 张图片${!r.written ? "（都已导出过）" : r.written < r.images ? `（新写入 ${r.written} 张，其余已导出过）` : ""} → ${tilde(r.folder ?? r.dir)}`;
+const exportedMsg = r => !r.images ? L.exportNone : `${L.exported(r.images)}${!r.written ? L.exportedAllOld : r.written < r.images ? L.exportedSome(r.written) : ""} → ${tilde(r.folder ?? r.dir)}`;
 async function exportSessionImages(s) {
   let dir;
   try { dir = (await api("/api/storage")).images.dir; } catch (e) { return toast(e.message); }
-  if (!confirm(`把这个会话的 ${s.images} 张图片导出到：\n${tilde(dir)}\n\n会放在以会话标题命名的子文件夹里，完成后自动打开。\n要换位置，点左栏「存储位置」。`)) return;
+  if (!confirm(L.exportConfirm(s.images, tilde(dir)))) return;
   try { toast(exportedMsg(await api("/api/images/export", { ids: [s.id], reveal: true }))); } catch (e) { toast(e.message); }
 }
 $("storage").addEventListener("submit", e => {
@@ -622,10 +782,10 @@ function renderList() {
   const showProj = !["project", "bucket"].includes(state.scope.kind);
   let h = "";
   if (state.error) h += `<div class="banner" style="background:color-mix(in srgb, var(--warn) 18%, transparent)">${esc(state.error)}</div>`;
-  h += `<div class="list-head"><h2>${esc(state.q ? "搜索结果" : scopeTitle())}</h2><span class="sub">${list.length} 个会话</span>
+  h += `<div class="list-head"><h2>${esc(state.q ? L.searchResults : scopeTitle())}</h2><span class="sub">${esc(L.nSessions(list.length))}</span>
     ${pq.labels.length ? `<div class="chips">${pq.labels.map(l => `<span class="chip">${esc(l)}</span>`).join("")}</div>` : ""}</div>`;
-  if (!state.sessions.length) h += `<div class="empty">还没有会话<br><span style="font-size:12.5px">在 pi 里聊几句之后，会话会出现在这里</span></div>`;
-  else if (!list.length) h += `<div class="empty">没有找到会话<br><span style="font-size:12.5px">试试更短的关键词，或去掉 @项目 / 时间条件</span></div>`;
+  if (!state.sessions.length) h += `<div class="empty">${esc(L.noSessions)}<br><span style="font-size:12.5px">${esc(L.noSessionsHint)}</span></div>`;
+  else if (!list.length) h += `<div class="empty">${esc(L.noMatch)}<br><span style="font-size:12.5px">${esc(L.noMatchHint)}</span></div>`;
   for (const g of gs) {
     const col = state.collapsed.has(g.key);
     h += `<div class="group"><button class="group-title" data-group="${esc(g.key)}"><span class="caret${col ? "" : " open"}">▸</span>${esc(g.label)}<span class="num">${g.items.length}</span><span class="line"></span></button>`;
@@ -697,7 +857,7 @@ const txKey = s => s.id;
 const IMG_EXT = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp", "image/bmp": "bmp", "image/avif": "avif" };
 function shotsHtml(s, images) {
   if (!images?.length) return "";
-  return `<div class="shots">${images.map(im => `<button class="shot" data-img="${esc(`/api/image?id=${encodeURIComponent(s.id)}&entry=${encodeURIComponent(im.entry)}&n=${im.n}`)}" data-name="${esc(`${s.id.slice(0, 8)}-${im.entry}-${im.n + 1}.${IMG_EXT[im.mimeType] || "bin"}`)}" title="点击放大 / 下载"><img alt="图片"></button>`).join("")}</div>`;
+  return `<div class="shots">${images.map(im => `<button class="shot" data-img="${esc(`/api/image?id=${encodeURIComponent(s.id)}&entry=${encodeURIComponent(im.entry)}&n=${im.n}`)}" data-name="${esc(`${s.id.slice(0, 8)}-${im.entry}-${im.n + 1}.${IMG_EXT[im.mimeType] || "bin"}`)}" title="${esc(L.shotTip)}"><img alt="${esc(L.image)}"></button>`).join("")}</div>`;
 }
 // <img> cannot send the token header, so images are fetched and shown as blob URLs.
 const blobs = new Map();
@@ -706,15 +866,15 @@ function loadShots(root) {
     b.dataset.loaded = "1";
     let p = blobs.get(b.dataset.img);
     if (!p) {
-      p = fetch(apiUrl(b.dataset.img), { headers: { "x-token": TOKEN } }).then(r => r.ok ? r.blob() : Promise.reject()).then(x => URL.createObjectURL(x));
+      p = fetch(apiUrl(b.dataset.img), { headers: { "x-token": TOKEN, "x-lang": LANG } }).then(r => r.ok ? r.blob() : Promise.reject()).then(x => URL.createObjectURL(x));
       p.catch(() => blobs.delete(b.dataset.img));
       blobs.set(b.dataset.img, p);
     }
-    p.then(u => { b.querySelector("img").src = u; b.dataset.url = u; }, () => { b.classList.add("err"); b.textContent = "[图片读取失败]"; });
+    p.then(u => { b.querySelector("img").src = u; b.dataset.url = u; }, () => { b.classList.add("err"); b.textContent = L.imageFailed; });
   }
 }
-const COPY_BTN = `<button class="copy" data-copy title="复制">复制</button>`;
-const MSG_COPY_BTN = `<button class="copy" data-copy title="复制这条消息的原始 Markdown">复制全文</button>`;
+const COPY_BTN = `<button class="copy" data-copy title="${esc(L.copy)}">${esc(L.copy)}</button>`;
+const MSG_COPY_BTN = `<button class="copy" data-copy title="${esc(L.copyMsgTip)}">${esc(L.copyAll)}</button>`;
 const codeBox = inner => `<div class="codebox"><pre>${inner}</pre>${COPY_BTN}</div>`;
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); }
@@ -722,18 +882,18 @@ async function copyText(text) {
     const ta = Object.assign(document.createElement("textarea"), { value: text });
     document.body.append(ta); ta.select(); document.execCommand("copy"); ta.remove();
   }
-  toast("已复制");
+  toast(L.copied);
 }
 function toolHtml(t, s) {
-  return `<details class="tool${t.isError ? " err" : ""}"><summary><span class="tname">${esc(t.name)}</span><span class="tsum">${esc(t.summary)}</span>${t.isError ? `<span class="terr">失败</span>` : t.output === undefined ? `<span class="terr" style="color:var(--faint)">无结果</span>` : ""}</summary>
-    ${t.args ? `<div class="tlabel">参数</div>${codeBox(esc(t.args))}` : ""}${t.output !== undefined && (t.output || !t.images) ? `<div class="tlabel">输出</div>${codeBox(esc(t.output || "（空）"))}` : ""}${shotsHtml(s, t.images)}</details>`;
+  return `<details class="tool${t.isError ? " err" : ""}"><summary><span class="tname">${esc(t.name)}</span><span class="tsum">${esc(t.summary)}</span>${t.isError ? `<span class="terr">${esc(L.toolFailed)}</span>` : t.output === undefined ? `<span class="terr" style="color:var(--faint)">${esc(L.toolNoResult)}</span>` : ""}</summary>
+    ${t.args ? `<div class="tlabel">${esc(L.args)}</div>${codeBox(esc(t.args))}` : ""}${t.output !== undefined && (t.output || !t.images) ? `<div class="tlabel">${esc(L.output)}</div>${codeBox(esc(t.output || L.empty))}` : ""}${shotsHtml(s, t.images)}</details>`;
 }
 function itemHtml(it, idx, s) {
   const time = it.time ? ` title="${esc(fmtFull(it.time))}"` : "";
   if (it.kind === "note") return `<div class="note" data-idx="${idx}"${time}><details><summary>ℹ︎ ${esc(it.title)}</summary><div class="md">${md(it.text)}</div></details></div>`;
-  if (it.kind === "user") return `<div class="msg user" data-idx="${idx}"${time}><div class="who">你</div><div class="body md">${md(it.text)}${shotsHtml(s, it.images)}</div>${it.text.trim() ? MSG_COPY_BTN : ""}</div>`;
+  if (it.kind === "user") return `<div class="msg user" data-idx="${idx}"${time}><div class="who">${esc(L.you)}</div><div class="body md">${md(it.text)}${shotsHtml(s, it.images)}</div>${it.text.trim() ? MSG_COPY_BTN : ""}</div>`;
   return `<div class="msg assistant" data-idx="${idx}"${time}><div class="who">AI</div><div class="body">
-    ${it.thinking ? `<details class="thinking"><summary>💭 思考过程</summary><div class="md">${md(it.thinking)}</div></details>` : ""}
+    ${it.thinking ? `<details class="thinking"><summary>${esc(L.thinking)}</summary><div class="md">${md(it.thinking)}</div></details>` : ""}
     ${it.text ? `<div class="md">${md(it.text)}</div>` : ""}
     ${it.tools.map(t => toolHtml(t, s)).join("")}
     ${it.error ? `<div class="terr-box">⚠︎ ${esc(it.error)}</div>` : ""}</div>${it.text.trim() ? MSG_COPY_BTN : ""}</div>`;
@@ -772,10 +932,10 @@ async function loadTx(s, until) {
 }
 function renderTxFoot(s) {
   const tx = state.tx.get(txKey(s)), foot = $("pv-foot"); if (!foot || !tx) return;
-  foot.innerHTML = tx.error ? `<div class="more">读取失败：${esc(tx.error)} <button class="tag" data-act="reload-tx">重试</button></div>` :
-    !tx.done ? `<div class="more" id="pv-sentinel"><span class="spin"></span>正在加载… ${tx.items.length}/${tx.total ?? "?"}</div>` :
-    !tx.items.length ? `<div class="hint">这个会话还没有消息</div>` :
-    `<div class="more">共 ${tx.items.length} 条 · 已显示全部${tx.stale ? ` · <button class="tag" data-act="reload-tx">有新消息，刷新</button>` : ""}</div>`;
+  foot.innerHTML = tx.error ? `<div class="more">${esc(L.loadFailed(tx.error))} <button class="tag" data-act="reload-tx">${esc(L.retry)}</button></div>` :
+    !tx.done ? `<div class="more" id="pv-sentinel"><span class="spin"></span>${esc(L.loadingMore)} ${tx.items.length}/${tx.total ?? "?"}</div>` :
+    !tx.items.length ? `<div class="hint">${esc(L.noMessages)}</div>` :
+    `<div class="more">${esc(L.allShown(tx.items.length))}${tx.stale ? ` · <button class="tag" data-act="reload-tx">${esc(L.newMessages)}</button>` : ""}</div>`;
   txObserver?.disconnect();
   const sentinel = $("pv-sentinel");
   if (sentinel) { txObserver = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) loadTx(s); }, { root: $("preview"), rootMargin: "600px" }); txObserver.observe(sentinel); }
@@ -799,33 +959,33 @@ function openTx(s, fresh) {
 function headHtml(s) {
   const pq = parseQuery(state.q), parent = s.parent && state.sessions.find(x => x.path === s.parent);
   const organizing = state.organize.running, reading = $("app").classList.contains("reading");
-  return `<button class="btn back" data-act="back" style="margin-bottom:12px">← 返回列表</button>
-    <h1>${state.editing ? `<input id="rename" value="${esc(title(s))}" maxlength="80">` : highlight(title(s), pq.words)}${isCurrent(s) ? ` <span class="chip" style="font-size:12px">当前会话</span>` : ""}</h1>
-    <div class="raw-title">原始首句：${esc(s.firstUser || "（无）")}${s.meta.titleSource === "manual" ? " · 标题为手动命名" : s.meta.titleSource === "ai" ? " · 标题由 AI 生成" : ""}</div>
+  return `<button class="btn back" data-act="back" style="margin-bottom:12px">${esc(L.backToList)}</button>
+    <h1>${state.editing ? `<input id="rename" value="${esc(title(s))}" maxlength="80">` : highlight(title(s), pq.words)}${isCurrent(s) ? ` <span class="chip" style="font-size:12px">${esc(L.currentSession)}</span>` : ""}</h1>
+    <div class="raw-title">${esc(L.firstLine)}${esc(s.firstUser || L.noneParen)}${esc(s.meta.titleSource === "manual" ? L.manualTitle : s.meta.titleSource === "ai" ? L.aiTitle : "")}</div>
     <div class="actions">
-      <button class="btn primary" data-act="open" ${isCurrent(s) ? "disabled style='opacity:.5;cursor:default'" : ""}>▶ 在 pi 中打开</button>
-      <button class="btn" data-act="copy">复制命令</button>
-      <button class="btn" data-act="rename">重命名</button>
-      <button class="btn" data-act="pin">${s.meta.pinned ? "取消置顶" : "置顶"}</button>
-      <button class="btn" data-act="archive">${s.meta.archived ? "取消归档" : "归档"}</button>
-      ${s.images ? `<button class="btn" data-act="export-images" title="把这个会话里的图片存成单独的文件">🖼 导出图片（${s.images}）</button>` : ""}
-      <button class="btn" data-act="organize" ${organizing ? "disabled style='opacity:.5'" : ""}>✨ ${s.meta.organizedAt ? "重新生成摘要" : "AI 生成标题"}</button>
-      <button class="btn focus-btn" data-act="reading" title="隐藏会话列表，加宽对话区（Esc 退出）">${reading ? "⤡ 退出专注" : "⤢ 专注阅读"}</button>
+      <button class="btn primary" data-act="open" ${isCurrent(s) ? "disabled style='opacity:.5;cursor:default'" : ""}>${esc(L.openInPi)}</button>
+      <button class="btn" data-act="copy">${esc(L.copyCmd)}</button>
+      <button class="btn" data-act="rename">${esc(L.rename)}</button>
+      <button class="btn" data-act="pin">${esc(s.meta.pinned ? L.unpin : L.pin)}</button>
+      <button class="btn" data-act="archive">${esc(s.meta.archived ? L.unarchive : L.archive)}</button>
+      ${s.images ? `<button class="btn" data-act="export-images" title="${esc(L.exportTip)}">${esc(L.exportN(s.images))}</button>` : ""}
+      <button class="btn" data-act="organize" ${organizing ? "disabled style='opacity:.5'" : ""}>✨ ${esc(s.meta.organizedAt ? L.regenerate : L.aiTitleBtn)}</button>
+      <button class="btn focus-btn" data-act="reading" title="${esc(L.focusTip)}">${esc(reading ? L.exitFocus : L.focus)}</button>
     </div>
-    ${s.meta.summary ? `<div class="summary-box"><div class="lbl">摘要</div>${highlight(s.meta.summary, pq.words)}</div>` : ""}
+    ${s.meta.summary ? `<div class="summary-box"><div class="lbl">${esc(L.summary)}</div>${highlight(s.meta.summary, pq.words)}</div>` : ""}
     <dl class="facts">
-      <dt>项目</dt><dd>${esc(tilde(s.cwd) || "未知")}</dd>
-      <dt>最后活动</dt><dd class="num">${fmtFull(s.modified)}</dd>
-      <dt>创建时间</dt><dd class="num">${fmtFull(s.created)}</dd>
-      <dt>消息</dt><dd>${s.count} 条${s.model ? " · " + esc(s.model) : ""}</dd>
-      ${tags(s).length ? `<dt>标签</dt><dd>${tags(s).map(t => `<span class="tag">#${esc(t)}</span>`).join(" ")}</dd>` : ""}
-      ${parent ? `<dt>分叉自</dt><dd><button class="tag" data-goto="${esc(parent.id)}">${esc(title(parent))}</button></dd>` : ""}
+      <dt>${esc(L.project)}</dt><dd>${esc(tilde(s.cwd) || L.unknown)}</dd>
+      <dt>${esc(L.modified)}</dt><dd class="num">${fmtFull(s.modified)}</dd>
+      <dt>${esc(L.created)}</dt><dd class="num">${fmtFull(s.created)}</dd>
+      <dt>${esc(L.messages)}</dt><dd>${esc(L.msgs(s.count))}${s.model ? " · " + esc(s.model) : ""}</dd>
+      ${tags(s).length ? `<dt>${esc(L.tags)}</dt><dd>${tags(s).map(t => `<span class="tag">#${esc(t)}</span>`).join(" ")}</dd>` : ""}
+      ${parent ? `<dt>${esc(L.forkedFrom)}</dt><dd><button class="tag" data-goto="${esc(parent.id)}">${esc(title(parent))}</button></dd>` : ""}
     </dl>
-    <h3>完整对话 <span style="font-weight:400">· 当前分支 · 工具调用可点开查看</span></h3>`;
+    <h3>${esc(L.conversation)} <span style="font-weight:400">${esc(L.conversationSub)}</span></h3>`;
 }
 function renderPreview() {
   const s = state.sessions.find(x => x.id === state.selected);
-  if (!s) { state.pvKey = null; $("preview").innerHTML = state.loaded ? `<div class="empty">选择一个会话查看摘要和内容</div>` : ""; $("app").classList.remove("detail"); return; }
+  if (!s) { state.pvKey = null; $("preview").innerHTML = state.loaded ? `<div class="empty">${esc(L.pickSession)}</div>` : ""; $("app").classList.remove("detail"); return; }
   const key = s.id + "|" + state.q;
   if (state.pvKey !== key) {
     // Different session or search: rebuild everything.
@@ -862,7 +1022,7 @@ async function refresh() {
     }
     state.etag = data.etag;
     const first = !state.loaded;
-    Object.assign(state, { sessions: data.sessions, current: data.current, home: data.home || "", model: data.model, organize: data.organize, loaded: true, error: data.connected ? "" : "pi 正在切换会话，稍后会自动恢复。" });
+    Object.assign(state, { sessions: data.sessions, current: data.current, home: data.home || "", model: data.model, organize: data.organize, loaded: true, error: data.connected ? "" : L.switchingBanner });
     if (first) {
       const cur = state.sessions.find(isCurrent) || state.sessions[0];
       if (cur) state.openProjects.add(cur.cwd);
@@ -871,7 +1031,7 @@ async function refresh() {
     if (!state.editing) render(); else { renderHeader(); renderSide(); renderList(); }
     if (first) loadModels(); else renderAskModel();
   } catch (e) {
-    state.error = e.status === 401 ? "页面令牌已失效：请在 pi 中运行 /sessions 重新打开。" : e.message;
+    state.error = e.status === 401 ? L.tokenExpired : e.message;
     state.loaded = true; renderList();
   }
   pollTimer = setTimeout(refresh, state.organize.running ? 1500 : document.hidden ? 20000 : 5000);
@@ -882,7 +1042,7 @@ async function mutate(body, okMsg) {
 }
 async function organize(ids) {
   if (!ids.length) return;
-  if (!confirm(`将用 ${aiModelName()} 为 ${ids.length} 个会话生成标题、摘要和标签。\n\n· 每个会话的开头部分会发送给该模型的服务商\n· 每个会话一次模型请求，会产生额外用量\n\n继续？`)) return;
+  if (!confirm(L.organizeConfirm(aiModelName(), ids.length))) return;
   try { state.organize = (await api("/api/organize", { ids, model: state.aiModel || undefined })).organize; renderHeader(); refresh(); }
   catch (e) { toast(e.message); }
 }
@@ -893,16 +1053,16 @@ async function act(a) {
   if (a === "reload-tx" && s) { openTx(s, true); return; }
   if (!s) return;
   if (a === "open") {
-    if (isCurrent(s)) return toast("已经是当前会话");
+    if (isCurrent(s)) return toast(L.alreadyCurrent);
     try { const r = await api("/api/open", { id: s.id }); toast(r.message); if (r.ok) setTimeout(refresh, 1200); } catch (e) { toast(e.message); }
   }
   if (a === "copy") {
     const cmd = `cd ${JSON.stringify(s.cwd)} && pi --session ${s.id}`;
-    try { await navigator.clipboard.writeText(cmd); toast("已复制：" + cmd); } catch { prompt("复制这条命令：", cmd); }
+    try { await navigator.clipboard.writeText(cmd); toast(L.copiedCmd(cmd)); } catch { prompt(L.copyCmdPrompt, cmd); }
   }
   if (a === "rename") { state.editing = true; renderPreview(); }
-  if (a === "pin") mutate({ id: s.id, pinned: !s.meta.pinned }, s.meta.pinned ? "已取消置顶" : "已置顶");
-  if (a === "archive") mutate({ id: s.id, archived: !s.meta.archived }, s.meta.archived ? "已取消归档" : "已归档（默认列表中隐藏，可在「已归档」里找到）");
+  if (a === "pin") mutate({ id: s.id, pinned: !s.meta.pinned }, s.meta.pinned ? L.unpinned : L.pinnedDone);
+  if (a === "archive") mutate({ id: s.id, archived: !s.meta.archived }, s.meta.archived ? L.unarchived : L.archivedDone);
   if (a === "organize") organize([s.id]);
   if (a === "export-images") exportSessionImages(s);
 }
@@ -911,7 +1071,7 @@ async function act(a) {
 for (const [id, key] of [["titleSeg", "titleMode"], ["timeSeg", "timeField"]])
   $(id).addEventListener("click", e => { const v = e.target.closest("button")?.dataset.v; if (!v) return; state[key] = v; savePrefs(); render(); });
 $("organize").addEventListener("click", async () => {
-  if (state.organize.running) { try { state.organize = (await api("/api/organize/cancel", {})).organize; renderHeader(); toast("已取消剩余的整理"); } catch (e) { toast(e.message); } return; }
+  if (state.organize.running) { try { state.organize = (await api("/api/organize/cancel", {})).organize; renderHeader(); toast(L.organizeCancelled); } catch (e) { toast(e.message); } return; }
   organize(state.sessions.filter(needsOrganize).sort((a, b) => b.modified.localeCompare(a.modified)).map(s => s.id));
 });
 $("side").addEventListener("click", e => {
@@ -956,7 +1116,7 @@ $("preview").addEventListener("keydown", e => {
   if (e.target.id !== "rename") return;
   if (e.key === "Enter" && !e.isComposing) {
     const v = e.target.value.trim(); state.editing = false;
-    if (v && v !== title(state.sessions.find(x => x.id === state.selected))) mutate({ id: state.selected, title: v }, "已重命名，pi 的 /resume 里也会显示新标题"); else renderPreview();
+    if (v && v !== title(state.sessions.find(x => x.id === state.selected))) mutate({ id: state.selected, title: v }, L.renamed); else renderPreview();
   }
   if (e.key === "Escape") { state.editing = false; renderPreview(); }
 });

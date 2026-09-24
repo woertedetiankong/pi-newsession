@@ -1,6 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { SessionRecord } from "./scan.ts";
 import { cleanTags } from "./meta.ts";
+import { type Lang, LocalizedError } from "./i18n.ts";
 
 export type ModelContext = Pick<ExtensionContext, "model" | "modelRegistry">;
 export interface Organized { title: string; summary: string; tags: string[]; }
@@ -27,21 +28,22 @@ export function promptFor(record: SessionRecord, existingTags: string[]): string
 
 export function parseOrganized(raw: string): Organized {
   const start = raw.indexOf("{"), end = raw.lastIndexOf("}");
-  if (start < 0 || end <= start) throw new Error("模型没有返回 JSON");
+  if (start < 0 || end <= start) throw new LocalizedError("noJson");
   const data = JSON.parse(raw.slice(start, end + 1));
   const title = typeof data.title === "string" ? data.title.replace(/^["'「]|["'」。]$/g, "").trim() : "";
-  if (!title) throw new Error("模型没有返回标题");
+  if (!title) throw new LocalizedError("noTitle");
   return { title, summary: typeof data.summary === "string" ? data.summary.trim() : "", tags: cleanTags(data.tags) };
 }
 
-export async function organizeOne(ctx: ModelContext, record: SessionRecord, existingTags: string[], signal: AbortSignal): Promise<Organized> {
+/** `lang` is the fallback language for titles when the conversation's own language is unclear. */
+export async function organizeOne(ctx: ModelContext, record: SessionRecord, existingTags: string[], signal: AbortSignal, lang: Lang = "zh"): Promise<Organized> {
   const model = ctx.model;
-  if (!model) throw new Error("pi 当前没有选择模型");
+  if (!model) throw new LocalizedError("noModel");
   const response = await ctx.modelRegistry.complete(model, {
-    systemPrompt: SYSTEM,
+    systemPrompt: lang === "en" ? SYSTEM.replace("无法判断时用中文", "无法判断时用英文") : SYSTEM,
     messages: [{ role: "user", content: [{ type: "text", text: promptFor(record, existingTags) }], timestamp: Date.now() }],
   }, { signal, maxTokens: 400 });
-  if (response.stopReason === "error" || response.stopReason === "aborted") throw new Error(response.stopReason === "aborted" ? "已取消" : "模型请求失败");
+  if (response.stopReason === "error" || response.stopReason === "aborted") throw new LocalizedError(response.stopReason === "aborted" ? "cancelled" : "modelFailed");
   return parseOrganized(response.content.filter(b => b.type === "text").map(b => (b as { text: string }).text).join("\n"));
 }
 

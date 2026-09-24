@@ -1,6 +1,7 @@
 import type { SessionRecord } from "./scan.ts";
 import type { SessionMeta } from "./meta.ts";
 import type { ModelContext } from "./organize.ts";
+import { type Lang, LocalizedError } from "./i18n.ts";
 
 export interface AskHit { id: string; reason: string; }
 export interface AskResult { results: AskHit[]; candidates: number; unorganized: number; usage?: { input: number; output: number }; }
@@ -35,7 +36,7 @@ export function candidateLines(records: SessionRecord[], meta: Record<string, Se
 
 export function parseAsk(raw: string, ids: string[]): AskHit[] {
   const start = raw.indexOf("{"), end = raw.lastIndexOf("}");
-  if (start < 0 || end <= start) throw new Error("模型没有返回 JSON");
+  if (start < 0 || end <= start) throw new LocalizedError("noJson");
   const data = JSON.parse(raw.slice(start, end + 1));
   const out: AskHit[] = [];
   for (const item of Array.isArray(data.results) ? data.results : []) {
@@ -50,16 +51,17 @@ export function parseAsk(raw: string, ids: string[]): AskHit[] {
   return out;
 }
 
-export async function askSessions(ctx: ModelContext, query: string, records: SessionRecord[], meta: Record<string, SessionMeta>, signal: AbortSignal, today = new Date()): Promise<AskResult> {
+export async function askSessions(ctx: ModelContext, query: string, records: SessionRecord[], meta: Record<string, SessionMeta>, signal: AbortSignal, today = new Date(), lang: Lang = "zh"): Promise<AskResult> {
   const model = ctx.model;
-  if (!model) throw new Error("pi 当前没有选择模型");
+  if (!model) throw new LocalizedError("noModel");
   const { lines, ids, unorganized } = candidateLines(records, meta);
   if (!ids.length) return { results: [], candidates: 0, unorganized: 0 };
   const response = await ctx.modelRegistry.complete(model, {
-    systemPrompt: SYSTEM,
+    // The reason is shown on the page, so it follows the page language.
+    systemPrompt: lang === "en" ? `${SYSTEM}\n- reason 用英文写，不超过 15 个词。` : SYSTEM,
     messages: [{ role: "user", content: [{ type: "text", text: JSON.stringify({ today: localDate(today.toISOString()), query: clip(query, 300), sessions: lines.join("\n") }) }], timestamp: Date.now() }],
   }, { signal, maxTokens: 800 });
-  if (response.stopReason === "error" || response.stopReason === "aborted") throw new Error(response.stopReason === "aborted" ? "已取消" : "模型请求失败");
+  if (response.stopReason === "error" || response.stopReason === "aborted") throw new LocalizedError(response.stopReason === "aborted" ? "cancelled" : "modelFailed");
   const text = response.content.filter(b => b.type === "text").map(b => (b as { text: string }).text).join("\n");
   const u = (response as { usage?: { input?: number; output?: number } }).usage;
   return { results: parseAsk(text, ids), candidates: ids.length, unorganized, usage: u ? { input: u.input ?? 0, output: u.output ?? 0 } : undefined };

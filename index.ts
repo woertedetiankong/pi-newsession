@@ -9,6 +9,7 @@ import { MetaStore } from "./src/meta.ts";
 import { SessionScanner } from "./src/scan.ts";
 import { focusTerminal } from "./src/focus.ts";
 import { DataLocation, openPath } from "./src/storage.ts";
+import { localize, terminalLang, text } from "./src/i18n.ts";
 
 // The server outlives a single extension runtime (session switches rebuild the runtime), so it lives on globalThis.
 const shared = globalThis as typeof globalThis & { __piSessionsServer?: SessionsServer };
@@ -54,11 +55,11 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
     currentSessionFile: () => ctx.sessionManager.getSessionFile(),
     sessionDir: () => ctx.sessionManager.getSessionDir(),
     model: () => ctx,
-    open: async path => {
-      if (path === ctx.sessionManager.getSessionFile()) return { ok: true, message: "已经是当前会话" };
-      if (!ctx.isIdle()) return { ok: false, message: "pi 正在执行任务，完成后再切换" };
+    open: async (path, lang) => {
+      if (path === ctx.sessionManager.getSessionFile()) return { ok: true, message: text(lang, "alreadyCurrent") };
+      if (!ctx.isIdle()) return { ok: false, message: text(lang, "busy") };
       pi.sendUserMessage(`/sessions switch ${path}`, { expandPromptTemplates: true });
-      return { ok: true, message: "已在 pi 中切换会话" };
+      return { ok: true, message: text(lang, "switched") };
     },
     rename: async (path, title) => {
       if (path === ctx.sessionManager.getSessionFile()) pi.setSessionName(title);
@@ -102,20 +103,20 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
   }
 
   pi.registerCommand("sessions", {
-    description: "在浏览器中按项目和日期浏览、搜索、整理会话",
+    description: "Browse, search and organize sessions in the browser / 在浏览器中按项目和日期浏览、搜索、整理会话",
     handler: async (args, ctx) => {
-      const command = args.trim();
+      const command = args.trim(), lang = terminalLang();
       try {
         if (command.startsWith("switch ")) {
           const target = resolve(command.slice("switch ".length).trim());
           if (!(await ownsSessionFile(target)) || !(await stat(target).catch(() => undefined))?.isFile()) {
-            ctx.ui.notify("找不到这个会话文件", "error");
+            ctx.ui.notify(text(lang, "noSessionFile"), "error");
             return;
           }
           // Read before switching: ctx is stale once the session is replaced.
           const interactive = ctx.hasUI && ctx.mode === "tui";
           const result = await ctx.switchSession(target);
-          if (result.cancelled) ctx.ui.notify("已取消切换会话", "info");
+          if (result.cancelled) ctx.ui.notify(text(lang, "switchCancelled"), "info");
           // Bring this terminal back in front of the browser; best effort, opt out with PI_SESSIONS_FOCUS=0.
           else if (interactive && process.env.PI_SESSIONS_FOCUS !== "0") void focusTerminal().catch(() => {});
           return;
@@ -123,15 +124,15 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
         if (command === "stop") {
           // The page is shared with other pi-web apps: stop listening, keep everything mounted for the next open.
           await shared.__piSessionsServer?.hub.close();
-          ctx.ui.notify("网页已关闭（同一网页里的其他插件页面也一并关闭）", "info");
+          ctx.ui.notify(text(lang, "stopped"), "info");
           return;
         }
         const url = await start(ctx);
-        if (command === "url") { ctx.ui.notify(`会话管理地址（含访问令牌，勿分享）：${url}`, "info"); return; }
+        if (command === "url") { ctx.ui.notify(text(lang, "url", url), "info"); return; }
         openPath(url);
-        ctx.ui.notify(`会话管理已在浏览器中打开：${url.replace(/#.*/, "")}（/sessions url 查看完整地址，/sessions stop 关闭）`, "info");
+        ctx.ui.notify(text(lang, "opened", url.replace(/#.*/, "")), "info");
       } catch (e) {
-        ctx.ui.notify(`会话管理出错：${(e as Error).message}`, "error");
+        ctx.ui.notify(text(lang, "failed", localize(e, lang)), "error");
       }
     },
   });

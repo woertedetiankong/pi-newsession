@@ -9,6 +9,7 @@
  * Layout: /<app>/ serves the app's page, /api/<app>/... its API (token required),
  * /hub.js the shared client (token, language, app switcher), / redirects to the first app.
  */
+import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -61,6 +62,33 @@ export interface WebHub {
   url(appId?: string): string | undefined;
   /** Stop listening; mounted apps stay registered for the next start(). */
   close(): Promise<void>;
+}
+
+/** "zh_CN.UTF-8", "zh-Hans-US", "en_US" … → a supported language; undefined for C/POSIX or others. */
+export function parseLanguage(value: string | undefined): WebLanguage | undefined {
+  const v = value?.trim().toLowerCase();
+  if (!v || v === "c" || v.startsWith("c.") || v === "posix") return undefined;
+  if (v.startsWith("zh")) return "zh";
+  if (v.startsWith("en")) return "en";
+  return undefined;
+}
+
+let detected: WebLanguage | undefined;
+/**
+ * The OS interface language, for terminal messages: LC_ALL, LC_MESSAGES, LANG, then (macOS keeps
+ * it outside the environment and terminals often export LANG=C.UTF-8) AppleLanguages, then Intl.
+ */
+export function systemLanguage(): WebLanguage {
+  if (detected) return detected;
+  const apple = () => {
+    if (process.platform !== "darwin") return undefined;
+    try {
+      const out = execFileSync("defaults", ["read", "-g", "AppleLanguages"], { encoding: "utf8", timeout: 2000 });
+      return parseLanguage(/"?([A-Za-z-]+)"?/.exec(out.replace(/^\s*\(\s*/, ""))?.[1]) ?? "en";
+    } catch { return undefined; }
+  };
+  return detected = parseLanguage(process.env.LC_ALL) ?? parseLanguage(process.env.LC_MESSAGES) ?? parseLanguage(process.env.LANG)
+    ?? apple() ?? parseLanguage(Intl.DateTimeFormat().resolvedOptions().locale) ?? "en";
 }
 
 export function webError(status: number, message: string): Error & { status: number } {
@@ -278,7 +306,7 @@ const CLIENT_JS = String.raw`(() => {
   const setLang = l => { write("pi-web-lang", l); location.reload(); };
   window.piWeb = { token, lang, app, setLang };
   const css = "#pi-web-nav{display:flex;align-items:center;gap:2px}" +
-    "#pi-web-nav a,#pi-web-nav button{padding:4px 10px;border-radius:8px;color:var(--muted,#666);text-decoration:none;font:inherit;font-weight:500;background:none;border:0;cursor:pointer}" +
+    "#pi-web-nav a,#pi-web-nav button{padding:4px 10px;border-radius:8px;color:var(--muted,#666);text-decoration:none;font:inherit;font-weight:500;background:none;border:0;cursor:pointer;white-space:nowrap}" +
     "#pi-web-nav a:hover,#pi-web-nav button:hover{color:var(--text,#111)}" +
     "#pi-web-nav a[aria-current]{background:var(--accent-soft,#e8ecff);color:var(--accent-text,#2a3fc2)}" +
     "#pi-web-nav .pw-lang{margin-left:6px;font-size:12px;border:1px solid var(--line,#ddd)}";

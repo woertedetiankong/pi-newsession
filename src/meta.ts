@@ -1,6 +1,7 @@
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { LocalizedError } from "./i18n.ts";
 
 export interface SessionMeta {
   title?: string;
@@ -155,7 +156,7 @@ async function lock(path: string): Promise<() => Promise<void>> {
       // A crashed process may leave the lock behind.
       const age = await stat(path).then(s => Date.now() - s.mtimeMs, () => 0);
       if (age > LOCK_STALE_MS) { await rm(path, { force: true }); continue; }
-      if (Date.now() - start > LOCK_WAIT_MS) throw new Error("会话管理数据正被另一个 pi 占用，请稍后重试");
+      if (Date.now() - start > LOCK_WAIT_MS) throw new LocalizedError("metaLocked");
       await delay(15 + Math.random() * 20);
     }
   }

@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { type Lang, text as t } from "./i18n.ts";
 
 /** Where an image sits in the session file; the bytes are served separately by /api/image. */
 export interface ImageRef { entry: string; n: number; mimeType: string; }
@@ -9,7 +10,6 @@ export type TranscriptItem =
   | { kind: "note"; title: string; text: string; time?: string };
 
 const TEXT_MAX = 200_000, ARGS_MAX = 4_000, OUTPUT_MAX = 20_000;
-const cut = (s: string, n: number) => s.length > n ? s.slice(0, n) + `\n…（已截断，共 ${s.length.toLocaleString()} 字）` : s;
 
 function parts(content: unknown): { text: string; images: string[]; thinking: string; calls: any[] } {
   if (typeof content === "string") return { text: content, images: [], thinking: "", calls: [] };
@@ -72,13 +72,15 @@ export function findImage(raw: string, entry: string, n: number): { data: Buffer
   return undefined;
 }
 
-export function buildTranscript(raw: string): TranscriptItem[] {
+/** `language` picks the wording of notes and markers the page shows (Chinese by default). */
+export function buildTranscript(raw: string, lang: Lang = "zh"): TranscriptItem[] {
+  const cut = (s: string, n: number) => s.length > n ? s.slice(0, n) + t(lang, "truncated", s.length.toLocaleString()) : s;
   const items: TranscriptItem[] = [], calls = new Map<string, ToolItem>();
   for (const e of activeBranch(raw)) {
     const time = typeof e.timestamp === "string" ? e.timestamp : undefined;
-    if (e.type === "compaction") { items.push({ kind: "note", title: "上下文已压缩", text: cut(String(e.summary ?? ""), TEXT_MAX), time }); continue; }
-    if (e.type === "branch_summary") { items.push({ kind: "note", title: "从其他分支返回", text: cut(String(e.summary ?? ""), TEXT_MAX), time }); continue; }
-    if (e.type === "custom_message" && e.display) { items.push({ kind: "note", title: String(e.customType ?? "插件消息"), text: cut(parts(e.content).text, TEXT_MAX), time }); continue; }
+    if (e.type === "compaction") { items.push({ kind: "note", title: t(lang, "compacted"), text: cut(String(e.summary ?? ""), TEXT_MAX), time }); continue; }
+    if (e.type === "branch_summary") { items.push({ kind: "note", title: t(lang, "branchReturn"), text: cut(String(e.summary ?? ""), TEXT_MAX), time }); continue; }
+    if (e.type === "custom_message" && e.display) { items.push({ kind: "note", title: String(e.customType ?? t(lang, "pluginMessage")), text: cut(parts(e.content).text, TEXT_MAX), time }); continue; }
     if (e.type !== "message" || !e.message) continue;
     const m = e.message;
     if (m.role === "user") {
@@ -91,7 +93,7 @@ export function buildTranscript(raw: string): TranscriptItem[] {
         if (t.id) calls.set(t.id, t);
         return t;
       });
-      const error = m.stopReason === "error" ? String(m.errorMessage ?? "请求出错") : m.stopReason === "aborted" ? "已中断" : undefined;
+      const error = m.stopReason === "error" ? String(m.errorMessage ?? t(lang, "requestError")) : m.stopReason === "aborted" ? t(lang, "aborted") : undefined;
       if (p.text.trim() || tools.length || error || p.thinking) items.push({ kind: "assistant", text: cut(p.text, TEXT_MAX), thinking: p.thinking ? cut(p.thinking, TEXT_MAX) : undefined, tools, error, model: m.model, time });
     } else if (m.role === "toolResult") {
       const t = calls.get(String(m.toolCallId ?? ""));
@@ -101,9 +103,9 @@ export function buildTranscript(raw: string): TranscriptItem[] {
       const tool: ToolItem = { id: "", name: "bash", summary: `! ${String(m.command ?? "")}`.slice(0, 160), args: String(m.command ?? ""), output: cut(String(m.output ?? ""), OUTPUT_MAX), isError: typeof m.exitCode === "number" && m.exitCode !== 0 };
       items.push({ kind: "assistant", text: "", tools: [tool], time });
     } else if (m.role === "custom" && m.display) {
-      items.push({ kind: "note", title: String(m.customType ?? "插件消息"), text: cut(parts(m.content).text, TEXT_MAX), time });
+      items.push({ kind: "note", title: String(m.customType ?? t(lang, "pluginMessage")), text: cut(parts(m.content).text, TEXT_MAX), time });
     } else if (m.role === "branchSummary" || m.role === "compactionSummary") {
-      items.push({ kind: "note", title: m.role === "branchSummary" ? "从其他分支返回" : "上下文已压缩", text: cut(String(m.summary ?? ""), TEXT_MAX), time });
+      items.push({ kind: "note", title: t(lang, m.role === "branchSummary" ? "branchReturn" : "compacted"), text: cut(String(m.summary ?? ""), TEXT_MAX), time });
     }
   }
   return items;
