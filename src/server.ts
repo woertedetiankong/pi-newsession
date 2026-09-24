@@ -13,7 +13,9 @@ export interface Binding {
   open(path: string): Promise<{ ok: boolean; message: string }>;
   rename(path: string, title: string): Promise<void>;
 }
-export interface ServerOptions { root: string; metaFile: string; webFile: string; token: string; port?: number; }
+export interface ServerOptions {
+  /** Default session root; extra custom session dirs come from the meta store. */
+  root: string; metaFile: string; webFile: string; token: string; port?: number; }
 
 class HttpError extends Error { constructor(readonly status: number, message: string) { super(message); } }
 
@@ -27,8 +29,8 @@ export class SessionsServer {
   private records: SessionRecord[] = [];
 
   constructor(private opts: ServerOptions) {
-    this.scanner = new SessionScanner(opts.root);
     this.meta = new MetaStore(opts.metaFile);
+    this.scanner = new SessionScanner(async () => [opts.root, ...(await this.meta.sessionDirs())]);
     this.organizer = new Organizer((id, signal) => this.organize(id, signal));
   }
 

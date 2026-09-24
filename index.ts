@@ -7,6 +7,8 @@ import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SessionsServer, type Binding } from "./src/server.ts";
 import { appendSessionName } from "./src/rename.ts";
+import { MetaStore } from "./src/meta.ts";
+import { SessionScanner } from "./src/scan.ts";
 
 const PREFERRED_PORT = 47291;
 // The server outlives a single extension runtime (session switches rebuild the runtime), so it lives on globalThis.
@@ -22,6 +24,19 @@ async function loadToken(file: string, dir: string): Promise<string> {
   await mkdir(dir, { recursive: true });
   await writeFile(file, token, { mode: 0o600 });
   return token;
+}
+/** Remembers a session dir outside the default root (custom sessionDir / --session-dir / env) so the page lists it too. */
+async function rememberSessionDir(ctx: ExtensionContext): Promise<void> {
+  const dir = ctx.sessionManager.getSessionDir();
+  if (!dir) return;
+  const p = paths(), target = resolve(dir), root = resolve(p.root);
+  if (target === root || target.startsWith(root + sep)) return;
+  await (shared.__piSessionsServer?.meta ?? new MetaStore(p.metaFile)).addSessionDir(target);
+}
+async function ownsSessionFile(path: string): Promise<boolean> {
+  const server = shared.__piSessionsServer, p = paths();
+  const scanner = server?.scanner ?? new SessionScanner(async () => [p.root, ...(await new MetaStore(p.metaFile).sessionDirs())]);
+  return scanner.owns(path);
 }
 function openBrowser(url: string): void {
   const [cmd, args] = process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? ["cmd", ["/c", "start", "", url]] : ["xdg-open", [url]];
@@ -47,6 +62,7 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
 
   pi.on("session_start", (_event, ctx) => {
     if (shared.__piSessionsServer) shared.__piSessionsServer.binding = bind(ctx);
+    rememberSessionDir(ctx).catch(() => {});
   });
   pi.on("session_shutdown", async event => {
     const server = shared.__piSessionsServer;
@@ -67,6 +83,7 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
       shared.__piSessionsServer = server;
     }
     server.binding = bind(ctx);
+    await rememberSessionDir(ctx).catch(() => {});
     return server.start();
   }
 
@@ -76,8 +93,8 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
       const command = args.trim();
       try {
         if (command.startsWith("switch ")) {
-          const target = resolve(command.slice("switch ".length).trim()), root = resolve(paths().root);
-          if (!target.startsWith(root + sep) || !target.endsWith(".jsonl") || !(await stat(target).catch(() => undefined))?.isFile()) {
+          const target = resolve(command.slice("switch ".length).trim());
+          if (!(await ownsSessionFile(target)) || !(await stat(target).catch(() => undefined))?.isFile()) {
             ctx.ui.notify("找不到这个会话文件", "error");
             return;
           }

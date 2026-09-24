@@ -1,5 +1,5 @@
 import { readdir, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 export interface Message { role: "user" | "assistant"; text: string; }
 export interface SessionRecord {
@@ -19,6 +19,19 @@ function textOf(content: unknown): string {
   return content.filter(p => p && p.type === "text" && typeof p.text === "string").map(p => p.text).join("\n");
 }
 
+/**
+ * First line of a user message for display. Skill invocations arrive as
+ * `<skill name="x" ...>…</skill>` followed by the user's own words, if any.
+ */
+export function displayLine(text: string): string {
+  const skill = text.match(/^<skill\s+name="([^"]+)"[^>]*>[\s\S]*?<\/skill>\s*/);
+  if (skill) {
+    const rest = text.slice(skill[0].length).trim();
+    return (rest ? `[${skill[1]}] ${rest.split("\n")[0]}` : `技能：${skill[1]}`).slice(0, 200);
+  }
+  return text.split("\n")[0].slice(0, 200);
+}
+
 /** Parse one pi session file (JSONL). Returns undefined for files without a session header. */
 export function parseSession(path: string, raw: string, mtime: Date): SessionRecord | undefined {
   let header: any, name: string | undefined, model: string | undefined, last: string | undefined, count = 0, firstUser = "";
@@ -36,7 +49,7 @@ export function parseSession(path: string, raw: string, mtime: Date): SessionRec
       count++;
       const role = e.message.role as Message["role"], text = textOf(e.message.content).trim();
       if (!text) continue;
-      if (role === "user" && !firstUser) firstUser = text.split("\n")[0].slice(0, 200);
+      if (role === "user" && !firstUser) firstUser = displayLine(text);
       if (messages.length < PREVIEW_MESSAGES) messages.push({ role, text: text.length > PREVIEW_CHARS ? text.slice(0, PREVIEW_CHARS) + "…" : text });
       if (size < TEXT_CAP) { chunks.push(text); size += text.length; }
     }
@@ -53,27 +66,44 @@ export function parseSession(path: string, raw: string, mtime: Date): SessionRec
   };
 }
 
-/** Scans `<root>/<project>/*.jsonl`, re-parsing only files whose mtime or size changed. */
+/**
+ * Scans each directory for `*.jsonl` directly inside it and one level down
+ * (the default layout is `<root>/<encoded-cwd>/*.jsonl`; a custom sessionDir is flat).
+ * Only files whose mtime or size changed are re-parsed.
+ */
 export class SessionScanner {
   private cache = new Map<string, { mtimeMs: number; size: number; record?: SessionRecord }>();
-  constructor(readonly root: string) {}
+  constructor(private dirs: () => Promise<string[]>) {}
+
+  async roots(): Promise<string[]> { return [...new Set((await this.dirs()).map(d => resolve(d)))]; }
 
   async scan(): Promise<SessionRecord[]> {
-    let dirs: string[];
-    try { dirs = await readdir(this.root); } catch { return []; }
-    const seen = new Set<string>(), out: SessionRecord[] = [];
-    for (const dir of dirs) {
-      let files: string[];
-      try { files = (await readdir(join(this.root, dir))).filter(f => f.endsWith(".jsonl")); } catch { continue; }
-      for (const f of files) {
-        const path = join(this.root, dir, f);
-        seen.add(path);
-        const record = await this.load(path);
-        if (record) out.push(record);
+    const paths = new Set<string>();
+    for (const root of await this.roots()) {
+      let entries;
+      try { entries = await readdir(root, { withFileTypes: true }); } catch { continue; }
+      for (const e of entries) {
+        if (e.isFile() && e.name.endsWith(".jsonl")) paths.add(join(root, e.name));
+        else if (e.isDirectory()) {
+          try { for (const f of await readdir(join(root, e.name))) if (f.endsWith(".jsonl")) paths.add(join(root, e.name, f)); } catch {}
+        }
       }
     }
-    for (const key of this.cache.keys()) if (!seen.has(key)) this.cache.delete(key);
+    const out: SessionRecord[] = [], seenIds = new Set<string>();
+    for (const path of paths) {
+      const record = await this.load(path);
+      if (record && !seenIds.has(record.id)) { seenIds.add(record.id); out.push(record); }
+    }
+    for (const key of this.cache.keys()) if (!paths.has(key)) this.cache.delete(key);
     return out.sort((a, b) => b.modified.localeCompare(a.modified));
+  }
+
+  /** True when `path` is a session file this scanner would read (used to validate switch targets). */
+  async owns(path: string): Promise<boolean> {
+    const target = resolve(path);
+    if (!target.endsWith(".jsonl")) return false;
+    const parent = dirname(target);
+    return (await this.roots()).some(root => parent === root || dirname(parent) === root);
   }
 
   private async load(path: string): Promise<SessionRecord | undefined> {

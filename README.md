@@ -2,6 +2,8 @@
 
 在浏览器里按**项目 → 日期**浏览、搜索和整理 pi 的历史会话，点一下就能让正在运行的 pi 切换过去。
 
+![会话管理页面（演示数据）](docs/screenshot.png)
+
 ## 安装与启动
 
 需要 Node.js 22+ 和 pi 0.85.1 或更新版本。
@@ -9,6 +11,9 @@
 ```bash
 # 从 GitHub 安装（写入 ~/.pi/agent/settings.json，所有项目都能用）
 pi install git:github.com/woertedetiankong/pi-newsession
+
+# 或锁定到某个版本，不随仓库更新而变化
+pi install git:github.com/woertedetiankong/pi-newsession@v0.1.0
 
 # 或只装到当前项目（写入 .pi/settings.json）
 pi install git:github.com/woertedetiankong/pi-newsession -l
@@ -19,7 +24,7 @@ pi -e git:github.com/woertedetiankong/pi-newsession
 
 安装后重启 pi，输入 `/sessions`，浏览器会打开会话管理页面。
 
-更新到最新版本：`pi update --extensions`。卸载：`pi remove git:github.com/woertedetiankong/pi-newsession`。
+更新到最新版本：`pi update --extensions`（锁定版本的安装不会被更新，改用 `pi install …@新版本`）。卸载：`pi remove git:github.com/woertedetiankong/pi-newsession`。
 
 | 命令 | 作用 |
 | --- | --- |
@@ -65,10 +70,22 @@ pi -e git:github.com/woertedetiankong/pi-newsession
 
 手动重命名的标题不会被 AI 覆盖。手动重命名还会写回会话文件，pi 自带的 `/resume` 里也能看到。AI 标题、摘要、标签、置顶和归档只保存在插件自己的文件里，不修改会话文件。
 
+## 在远程服务器上使用
+
+pi 跑在 SSH 远程机器上时，页面服务只监听那台机器的 `127.0.0.1`，本地浏览器无法直接访问。用端口转发把它带到本地：
+
+```bash
+ssh -L 47291:127.0.0.1:47291 你的服务器
+```
+
+然后在远程的 pi 中运行 `/sessions url`，把显示的完整地址（含 `#token=…`）粘贴到本地浏览器。端口 47291 被占用时插件会换用随机端口，以 `/sessions url` 显示的为准。
+
 ## 数据与安全
 
 - 会话从 `~/.pi/agent/sessions/`（或 `PI_CODING_AGENT_DIR` 指定的目录）读取，按文件修改时间增量缓存。
-- 插件数据保存在 `~/.pi/agent/pi-sessions/`：`meta.json`（标题、摘要、标签、置顶、归档）和 `token`（页面访问令牌，权限 0600）。
+- 通过 `--session-dir`、`PI_CODING_AGENT_SESSION_DIR` 或 settings 中的 `sessionDir` 自定义了会话目录时，插件会在 pi 使用该目录时自动记住它，之后一并列出。
+- 同时打开多个 pi 窗口时可以放心操作：每次保存都会加锁并基于最新文件合并，不会互相覆盖。
+- 插件数据保存在 `~/.pi/agent/pi-sessions/`：`meta.json`（标题、摘要、标签、置顶、归档、自定义会话目录）和 `token`（页面访问令牌，权限 0600）。
 - 页面服务只监听 `127.0.0.1`，优先使用端口 47291；所有接口都要求访问令牌，并拒绝非本机 Host 的请求。令牌放在地址的 `#` 之后，不会出现在请求日志里。
 - 服务在 pi 退出或 `/reload` 时关闭，会话切换时保持运行。
 

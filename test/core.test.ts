@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { request } from "node:http";
-import { parseSession, SessionScanner, searchSnippet } from "../src/scan.ts";
+import { parseSession, SessionScanner, searchSnippet, displayLine } from "../src/scan.ts";
 import { MetaStore } from "../src/meta.ts";
 import { Organizer, parseOrganized, organizeOne } from "../src/organize.ts";
 import { appendSessionName } from "../src/rename.ts";
@@ -38,7 +38,7 @@ test("scanner walks project folders and only re-parses changed files", async t =
   await writeFile(a, sessionFile("a", "/work/pi", [["user", "hello"]]));
   await writeFile(b, sessionFile("b", "/work/pi", [["user", "world"], ["assistant", "ok"]]));
   await writeFile(join(dir, "notes.txt"), "ignored");
-  const scanner = new SessionScanner(root);
+  const scanner = new SessionScanner(async () => [root]);
   assert.deepEqual((await scanner.scan()).map(r => r.id).sort(), ["a", "b"]);
   const first = (await scanner.scan()).find(r => r.id === "a");
   assert.equal((await scanner.scan()).find(r => r.id === "a"), first, "unchanged file is served from cache");
@@ -48,7 +48,7 @@ test("scanner walks project folders and only re-parses changed files", async t =
   assert.equal(updated.count, 2); assert.equal(updated.modified, "2026-09-05T00:00:00.000Z");
   await rm(b);
   assert.deepEqual((await scanner.scan()).map(r => r.id), ["a"]);
-  assert.deepEqual(await new SessionScanner(join(root, "missing")).scan(), []);
+  assert.deepEqual(await new SessionScanner(async () => [join(root, "missing")]).scan(), []);
 });
 
 test("searchSnippet requires every word and centers on the first hit", () => {
@@ -212,4 +212,44 @@ test("server /api/ask validates input and returns ranked hits", async t => {
   assert.deepEqual(await (await ask({ query: "滚动" })).json(), { results: [{ id: "a", reason: "滚动" }], candidates: 1, unorganized: 1, model: "m" });
   model = undefined;
   assert.equal((await ask({ query: "滚动" })).status, 409);
+});
+
+test("displayLine turns skill invocations into a readable first line", () => {
+  const skill = '<skill name="find-skills" location="/x/SKILL.md">\n# Find Skills\nlots of text\n</skill>';
+  assert.equal(displayLine(skill), "技能：find-skills");
+  assert.equal(displayLine(skill + "\n\n帮我找个 PDF 技能\n第二行"), "[find-skills] 帮我找个 PDF 技能");
+  assert.equal(displayLine("普通问题\n第二行"), "普通问题");
+  assert.equal(parseSession("/x", sessionFile("s", "/w", [["user", skill]]), new Date(0))!.firstUser, "技能：find-skills");
+});
+
+test("scanner reads flat custom session dirs and validates switch targets", async t => {
+  const base = await temp(t), root = join(base, "sessions"), custom = join(base, "proj", ".pi", "sessions");
+  await mkdir(join(root, "--w--"), { recursive: true }); await mkdir(custom, { recursive: true });
+  await writeFile(join(root, "--w--", "a.jsonl"), sessionFile("a", "/w", [["user", "hi"]]));
+  await writeFile(join(custom, "b.jsonl"), sessionFile("b", "/proj", [["user", "flat"]]));
+  await writeFile(join(custom, "dup.jsonl"), sessionFile("a", "/w", [["user", "same id"]]));
+  const scanner = new SessionScanner(async () => [root, custom, custom + "/"]);
+  assert.deepEqual((await scanner.scan()).map(r => r.id).sort(), ["a", "b"], "flat dir is read, duplicate dirs and ids collapse");
+  assert.equal(await scanner.owns(join(custom, "b.jsonl")), true);
+  assert.equal(await scanner.owns(join(root, "--w--", "a.jsonl")), true);
+  assert.equal(await scanner.owns(join(base, "elsewhere", "x.jsonl")), false);
+  assert.equal(await scanner.owns(join(root, "--w--", "a.txt")), false);
+  assert.equal(await scanner.owns(join(root, "--w--", "..", "..", "etc.jsonl")), false, "path traversal resolves outside");
+});
+
+test("meta store: two pi processes editing at once keep both changes", async t => {
+  const dir = await temp(t), file = join(dir, "meta.json");
+  const a = new MetaStore(file), b = new MetaStore(file);
+  await a.get("x"); await b.get("y");
+  await a.patch("x", { pinned: true });
+  await b.patch("y", { pinned: true });
+  assert.deepEqual(Object.keys(JSON.parse(await readFile(file, "utf8")).sessions).sort(), ["x", "y"]);
+  assert.equal((await b.get("x")).pinned, true, "b sees a's write without restarting");
+  await Promise.all([...Array(10)].map((_, i) => (i % 2 ? a : b).patch("k" + i, { archived: true })));
+  assert.equal(Object.keys(await new MetaStore(file).all()).length, 12, "concurrent writers from both stores all land");
+  await a.addSessionDir("/custom"); await b.addSessionDir("/custom");
+  assert.deepEqual(await new MetaStore(file).sessionDirs(), ["/custom"]);
+  await writeFile(file + ".lock", ""); await utimes(file + ".lock", new Date(0), new Date(0));
+  await a.patch("z", { pinned: true });
+  assert.equal((await b.get("z")).pinned, true, "a stale lock from a crashed process is taken over");
 });

@@ -7,6 +7,7 @@
   "files": [
     "index.ts",
     "src",
+    "web",
     "README.md",
     "LICENSE"
   ],
@@ -27,14 +28,21 @@
     "node": ">=22"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.85.1",
-    "@earendil-works/pi-tui": ">=0.85.1"
+    "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.85.1",
-    "@earendil-works/pi-tui": "0.85.1",
     "@types/node": "^24.0.0",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/woertedetiankong/pi-newsession.git"
   }
 }
