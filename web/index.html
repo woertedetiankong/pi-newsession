@@ -184,8 +184,8 @@ section.preview { overflow-y: auto; background: var(--panel); }
 #imgview .btn { background: var(--panel); color: var(--text); text-decoration: none; }
 .thinking { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
 .thinking > summary { cursor: pointer; }
-.app.hide-thinking .thinking, .app.hide-thinking .msg.think-only { display: none; }
-.pv h3 .think-toggle { float: right; font-size: 12px; font-weight: 400; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; letter-spacing: 0; }
+.app.chat-only .thinking, .app.chat-only .tool, .app.chat-only .msg.no-text { display: none; }
+.pv h3 .chat-toggle { float: right; font-size: 12px; font-weight: 400; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; letter-spacing: 0; }
 .thinking .md { border-left: 2px solid var(--line-strong); padding-left: 10px; margin-top: 4px; }
 .terr-box { color: #d4453b; font-size: 12.5px; margin-top: 4px; }
 .note { margin: 10px 0 14px; font-size: 12.5px; color: var(--muted); border: 1px dashed var(--line-strong); border-radius: 8px; padding: 6px 10px; }
@@ -301,11 +301,11 @@ const state = {
   titleMode: "ai", q: "", hits: null,
   scope: { kind: "all" }, openProjects: new Set(), selected: null, collapsed: new Set(["frag"]),
   editing: false, tx: new Map(), pvKey: null, loaded: false, ai: null,
-  aiModel: "", models: [], hideThinking: false,
+  aiModel: "", models: [], chatOnly: false,
 };
-try { const p = JSON.parse(localStorage.getItem("pi-sessions-prefs") || "{}"); if (p.titleMode) state.titleMode = p.titleMode; if (p.aiModel) state.aiModel = p.aiModel; if (p.hideThinking) state.hideThinking = true; } catch {}
-document.getElementById("app").classList.toggle("hide-thinking", state.hideThinking);
-const savePrefs = () => { try { localStorage.setItem("pi-sessions-prefs", JSON.stringify({ titleMode: state.titleMode, aiModel: state.aiModel, hideThinking: state.hideThinking })); } catch {} };
+try { const p = JSON.parse(localStorage.getItem("pi-sessions-prefs") || "{}"); if (p.titleMode) state.titleMode = p.titleMode; if (p.aiModel) state.aiModel = p.aiModel; if (p.chatOnly) state.chatOnly = true; } catch {}
+document.getElementById("app").classList.toggle("chat-only", state.chatOnly);
+const savePrefs = () => { try { localStorage.setItem("pi-sessions-prefs", JSON.stringify({ titleMode: state.titleMode, aiModel: state.aiModel, chatOnly: state.chatOnly })); } catch {} };
 
 // ---- API ----
 // Routes are written as /api/...; on the shared hub they live under /api/sessions/...
@@ -374,7 +374,7 @@ const L = {
     shotTip: "点击放大 / 下载", image: "图片", imageFailed: "[图片读取失败]",
     copyMsgTip: "复制这条消息的原始 Markdown", copyAll: "复制全文",
     toolFailed: "失败", toolNoResult: "无结果", args: "参数", output: "输出", empty: "（空）",
-    you: "你", thinking: "💭 思考过程", showThinking: "显示思考过程",
+    you: "你", thinking: "💭 思考过程", chatOnly: "只看对话", chatOnlyTip: "隐藏思考过程和工具调用，只显示你的提问和 AI 的回答",
     loadFailed: e => `读取失败：${e}`, retry: "重试", loadingMore: "正在加载…", noMessages: "这个会话还没有消息",
     allShown: n => `共 ${n} 条 · 已显示全部`, newMessages: "有新消息，刷新",
     backToList: "← 返回列表", currentSession: "当前会话", firstLine: "原始首句：", noneParen: "（无）", manualTitle: " · 标题为手动命名", aiTitle: " · 标题由 AI 生成",
@@ -435,7 +435,7 @@ const L = {
     shotTip: "Click to enlarge / download", image: "image", imageFailed: "[image failed to load]",
     copyMsgTip: "Copy this message's original Markdown", copyAll: "Copy all",
     toolFailed: "failed", toolNoResult: "no result", args: "Arguments", output: "Output", empty: "(empty)",
-    you: "You", thinking: "💭 Thinking", showThinking: "Show thinking",
+    you: "You", thinking: "💭 Thinking", chatOnly: "Chat only", chatOnlyTip: "Hide thinking and tool calls; show only your messages and the AI's replies",
     loadFailed: e => `Failed to load: ${e}`, retry: "Retry", loadingMore: "Loading…", noMessages: "This session has no messages yet",
     allShown: n => `${n} messages · all shown`, newMessages: "New messages, refresh",
     backToList: "← Back to list", currentSession: "Current session", firstLine: "First line: ", noneParen: "(none)", manualTitle: " · title set by hand", aiTitle: " · title by AI",
@@ -890,8 +890,7 @@ function itemHtml(it, idx, s) {
   const time = it.time ? ` title="${esc(fmtFull(it.time))}"` : "";
   if (it.kind === "note") return `<div class="note" data-idx="${idx}"${time}><details><summary>ℹ︎ ${esc(it.title)}</summary><div class="md">${md(it.text)}</div></details></div>`;
   if (it.kind === "user") return `<div class="msg user" data-idx="${idx}"${time}><div class="who">${esc(L.you)}</div><div class="body md">${md(it.text)}${shotsHtml(s, it.images)}</div>${it.text.trim() ? MSG_COPY_BTN : ""}</div>`;
-  const thinkOnly = it.thinking && !it.text && !it.tools.length && !it.error;
-  return `<div class="msg assistant${thinkOnly ? " think-only" : ""}" data-idx="${idx}"${time}><div class="who">AI</div><div class="body">
+  return `<div class="msg assistant${it.text.trim() || it.error ? "" : " no-text"}" data-idx="${idx}"${time}><div class="who">AI</div><div class="body">
     ${it.thinking ? `<details class="thinking"><summary>${esc(L.thinking)}</summary><div class="md">${md(it.thinking)}</div></details>` : ""}
     ${it.text ? `<div class="md">${md(it.text)}</div>` : ""}
     ${it.tools.map(t => toolHtml(t, s)).join("")}
@@ -980,7 +979,7 @@ function headHtml(s) {
       ${tags(s).length ? `<dt>${esc(L.tags)}</dt><dd>${tags(s).map(t => `<span class="tag">#${esc(t)}</span>`).join(" ")}</dd>` : ""}
       ${parent ? `<dt>${esc(L.forkedFrom)}</dt><dd><button class="tag" data-goto="${esc(parent.id)}">${esc(title(parent))}</button></dd>` : ""}
     </dl>
-    <h3>${esc(L.conversation)} <span style="font-weight:400">${esc(L.conversationSub)}</span><label class="think-toggle"><input type="checkbox" id="show-thinking"${state.hideThinking ? "" : " checked"}>${esc(L.showThinking)}</label></h3>`;
+    <h3>${esc(L.conversation)} <span style="font-weight:400">${esc(L.conversationSub)}</span><label class="chat-toggle" title="${esc(L.chatOnlyTip)}"><input type="checkbox" id="chat-only"${state.chatOnly ? " checked" : ""}>${esc(L.chatOnly)}</label></h3>`;
 }
 function renderPreview() {
   const s = state.sessions.find(x => x.id === state.selected);
@@ -1079,7 +1078,7 @@ $("side").addEventListener("click", e => {
   render();
 });
 $("ask").addEventListener("click", ask);
-document.addEventListener("change", e => { if (e.target.id !== "show-thinking") return; state.hideThinking = !e.target.checked; $("app").classList.toggle("hide-thinking", state.hideThinking); savePrefs(); });
+document.addEventListener("change", e => { if (e.target.id !== "chat-only") return; state.chatOnly = e.target.checked; $("app").classList.toggle("chat-only", state.chatOnly); savePrefs(); });
 $("aiModel").addEventListener("change", e => { state.aiModel = e.target.value; savePrefs(); renderHeader(); });
 $("list").addEventListener("click", e => {
   const a = e.target.closest("[data-ai]"); if (a) { if (a.dataset.ai === "exit") exitAi(); else $("organize").click(); return; }
