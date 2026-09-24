@@ -12,6 +12,7 @@ import { appendSessionName } from "../src/rename.ts";
 import { SessionsServer, type Binding } from "../src/server.ts";
 import { askSessions, candidateLines, parseAsk } from "../src/ask.ts";
 import { activeBranch, buildTranscript, firstMatch, toolSummary } from "../src/transcript.ts";
+import { planFocus, runFocus, windowsScript } from "../src/focus.ts";
 
 async function temp(t: any): Promise<string> { const dir = await mkdtemp(join(tmpdir(), "pi-sessions-test-")); t.after(() => rm(dir, { recursive: true, force: true })); return dir; }
 export function sessionFile(id: string, cwd: string, messages: [string, string][], extra: object[] = []): string {
@@ -323,4 +324,44 @@ test("transcript attaches tool results, keeps thinking, notes and bash, and trun
   assert.equal(firstMatch(items, ["npm"]), 1); assert.equal(firstMatch(items, ["npm", "不存在"]), -1); assert.equal(firstMatch(items, []), -1);
   assert.equal(toolSummary("custom", { foo: 1, bar: "line one\nline two" }), "line one line two");
   assert.equal(toolSummary("noop", {}), "noop");
+});
+
+test("planFocus picks the most precise way to raise each terminal", () => {
+  const mac = (env: NodeJS.ProcessEnv, extra: object = {}) => planFocus({ platform: "darwin", env, pid: 1, tty: "/dev/ttys004", ...extra });
+  assert.deepEqual(mac({ TERM_PROGRAM: "iTerm.app" }), [{ kind: "iterm", tty: "/dev/ttys004" }, { kind: "open-bundle", bundleId: "com.googlecode.iterm2" }]);
+  assert.deepEqual(mac({ TERM_PROGRAM: "Apple_Terminal" }).map(s => s.kind), ["terminal-app", "open-bundle"]);
+  assert.deepEqual(mac({ __CFBundleIdentifier: "com.todesktop.230313mzl4w4u92", TERM_PROGRAM: "vscode" }), [{ kind: "open-bundle", bundleId: "com.todesktop.230313mzl4w4u92" }], "Cursor reports vscode; the bundle id wins");
+  assert.deepEqual(mac({ TERM: "xterm-kitty" }), [{ kind: "open-bundle", bundleId: "net.kovidgoyal.kitty" }]);
+  assert.deepEqual(mac({}, { ancestors: ["-zsh", "/Applications/Alacritty.app/Contents/MacOS/alacritty"] }), [{ kind: "open-app", path: "/Applications/Alacritty.app" }]);
+  assert.deepEqual(mac({ TERM_PROGRAM: "iTerm.app" }, { tty: undefined }).map(s => s.kind), ["open-bundle"], "no tty: app-level only");
+  assert.deepEqual(mac({ TERM_PROGRAM: "iTerm.app", TMUX: "/tmp/tmux", TMUX_PANE: "%3" }).map(s => s.kind), ["tmux", "iterm", "open-bundle"]);
+  assert.deepEqual(mac({}), []);
+  assert.deepEqual(planFocus({ platform: "win32", env: {}, pid: 42 }), [{ kind: "windows", pid: 42 }]);
+  assert.deepEqual(planFocus({ platform: "linux", env: { TERM_PROGRAM: "iTerm.app" }, pid: 1 }), []);
+});
+
+test("runFocus falls back step by step and never throws", async () => {
+  const calls: string[] = [];
+  const exec = (answers: Record<string, string | Error>) => async (cmd: string, args: string[]) => {
+    calls.push(cmd + (cmd === "osascript" ? " " + args.at(-1) : cmd === "open" ? " " + args.join(" ") : ""));
+    const a = answers[cmd]; if (a instanceof Error) throw a; return a ?? "";
+  };
+  const iterm = [{ kind: "iterm", tty: "/dev/ttys004" }, { kind: "open-bundle", bundleId: "com.googlecode.iterm2" }] as const;
+  assert.equal(await runFocus([...iterm], exec({ osascript: "ok" })), "iterm");
+  assert.deepEqual(calls.splice(0), ["osascript /dev/ttys004"], "exact tab found: no app-level fallback");
+  assert.equal(await runFocus([...iterm], exec({ osascript: "missing" })), "open-bundle");
+  assert.equal(await runFocus([...iterm], exec({ osascript: new Error("Not authorized to send Apple events") })), "open-bundle", "denied automation falls back");
+  calls.length = 0;
+  assert.equal(await runFocus([{ kind: "tmux", pane: "%3" }, { kind: "open-bundle", bundleId: "x" }], exec({})), "open-bundle");
+  assert.deepEqual(calls, ["tmux", "tmux", "open -b x"], "tmux pane is selected, then the app raised");
+  assert.equal(await runFocus([{ kind: "windows", pid: 7 }], exec({ "powershell.exe": new Error("exit 3") })), undefined);
+  assert.equal(await runFocus([{ kind: "windows", pid: 7 }], exec({ "powershell.exe": "ok" })), "windows");
+  assert.equal(await runFocus([], exec({})), undefined);
+});
+
+test("windows focus script targets the given pid and only uses the documented user32 calls", () => {
+  const s = windowsScript(1234.9);
+  assert.match(s, /\$id = 1234;/);
+  for (const fn of ["SetForegroundWindow", "ShowWindow", "IsIconic", "keybd_event", "GetConsoleWindow"]) assert.ok(s.includes(fn), fn);
+  assert.equal(Buffer.from(Buffer.from(s, "utf16le").toString("base64"), "base64").toString("utf16le"), s, "round-trips through -EncodedCommand");
 });

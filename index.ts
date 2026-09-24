@@ -9,6 +9,7 @@ import { SessionsServer, type Binding } from "./src/server.ts";
 import { appendSessionName } from "./src/rename.ts";
 import { MetaStore } from "./src/meta.ts";
 import { SessionScanner } from "./src/scan.ts";
+import { focusTerminal } from "./src/focus.ts";
 
 const PREFERRED_PORT = 47291;
 // The server outlives a single extension runtime (session switches rebuild the runtime), so it lives on globalThis.
@@ -98,8 +99,12 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
             ctx.ui.notify("找不到这个会话文件", "error");
             return;
           }
+          // Read before switching: ctx is stale once the session is replaced.
+          const interactive = ctx.hasUI && ctx.mode === "tui";
           const result = await ctx.switchSession(target);
           if (result.cancelled) ctx.ui.notify("已取消切换会话", "info");
+          // Bring this terminal back in front of the browser; best effort, opt out with PI_SESSIONS_FOCUS=0.
+          else if (interactive && process.env.PI_SESSIONS_FOCUS !== "0") void focusTerminal().catch(() => {});
           return;
         }
         if (command === "stop") {

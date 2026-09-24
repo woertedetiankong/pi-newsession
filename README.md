@@ -13,7 +13,7 @@
 pi install git:github.com/woertedetiankong/pi-newsession
 
 # 或锁定到某个版本，不随仓库更新而变化
-pi install git:github.com/woertedetiankong/pi-newsession@v0.1.2
+pi install git:github.com/woertedetiankong/pi-newsession@v0.1.3
 
 # 或只装到当前项目（写入 .pi/settings.json）
 pi install git:github.com/woertedetiankong/pi-newsession -l
@@ -74,7 +74,18 @@ pi -e git:github.com/woertedetiankong/pi-newsession
 
 ## 打开会话
 
-「在 pi 中打开」会让当前运行的 pi 切换到该会话。pi 正在执行任务时不会切换，页面会提示稍后再试。「复制命令」复制 `cd <项目> && pi --session <id>`，可在新终端中恢复。
+「在 pi 中打开」会让当前运行的 pi 切换到该会话。pi 正在执行任务时不会切换，页面会提示稍后再试。
+
+切换后，插件会把运行这个 pi 的终端自动调回最前面，不用再手动点回终端：
+
+| 终端 | 效果 |
+| --- | --- |
+| macOS · iTerm2、系统「终端」 | 精确跳到 pi 所在的窗口和标签页（也支持 tmux 中的面板） |
+| macOS · Ghostty、Warp、WezTerm、kitty、VS Code、Cursor 等 | 把该应用调到前台 |
+| Windows（实验性，未经测试） | 把 pi 所在的窗口调到前台；Windows Terminal 中无法定位到具体标签页；被系统拦截时任务栏图标会闪烁 |
+| Linux | 暂不支持 |
+
+macOS 第一次使用时，系统可能询问是否允许终端「控制」自己（自动化权限），允许后才能精确定位标签页；拒绝时退回到只激活应用。不想要这个行为，启动 pi 前设置 `PI_SESSIONS_FOCUS=0`。「复制命令」复制 `cd <项目> && pi --session <id>`，可在新终端中恢复。
 
 ## AI 整理
 
