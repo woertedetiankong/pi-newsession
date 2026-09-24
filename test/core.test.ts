@@ -11,9 +11,10 @@ import { Organizer, parseOrganized, organizeOne } from "../src/organize.ts";
 import { appendSessionName } from "../src/rename.ts";
 import { SessionsServer, type Binding } from "../src/server.ts";
 import { askSessions, candidateLines, parseAsk } from "../src/ask.ts";
-import { activeBranch, buildTranscript, firstMatch, toolSummary } from "../src/transcript.ts";
+import { activeBranch, buildTranscript, findImage, firstMatch, toolSummary } from "../src/transcript.ts";
 import { planFocus, runFocus, windowsScript } from "../src/focus.ts";
 import { DataLocation, expandDir } from "../src/storage.ts";
+import { folderName, sessionImages } from "../src/export.ts";
 
 async function temp(t: any): Promise<string> { const dir = await mkdtemp(join(tmpdir(), "pi-sessions-test-")); t.after(() => rm(dir, { recursive: true, force: true })); return dir; }
 export function sessionFile(id: string, cwd: string, messages: [string, string][], extra: object[] = []): string {
@@ -175,6 +176,17 @@ test("server serves the page, guards the API and routes actions to the binding",
   assert.equal(metaOf("a").summary, "加锁");
   assert.equal(metaOf("b").title, "缓存重建");
 
+  const png = Buffer.from("89504e470d0a1a0a", "hex");
+  await appendFile(path, JSON.stringify({ type: "message", id: "pic", parentId: "late", timestamp: "2026-09-09T00:01:00.000Z", message: { role: "user", content: [{ type: "text", text: "看图" }, { type: "image", data: "PHN2Zz4=", mimeType: "image/svg+xml" }, { type: "image", data: png.toString("base64"), mimeType: "image/png" }] } }) + "\n");
+  const picTx = await (await call("/api/transcript?id=a&offset=3")).json();
+  assert.deepEqual(picTx.items[0].images, [{ entry: "pic", n: 0, mimeType: "image/svg+xml" }, { entry: "pic", n: 1, mimeType: "image/png" }]);
+  const img = await call("/api/image?id=a&entry=pic&n=1");
+  assert.equal(img.headers.get("content-type"), "image/png");
+  assert.deepEqual(Buffer.from(await img.arrayBuffer()), png);
+  assert.equal((await call("/api/image?id=a&entry=pic&n=0")).headers.get("content-type"), "application/octet-stream", "SVG is never served as an image");
+  assert.equal((await call("/api/image?id=a&entry=pic&n=5")).status, 404);
+  assert.equal((await call("/api/image?id=a&entry=pic&n=1", undefined, "wrong")).status, 401);
+
   server.binding = undefined;
   assert.equal((await call("/api/open", { id: "a" })).status, 503);
   const port = Number(new URL(base).port);
@@ -308,14 +320,17 @@ test("transcript attaches tool results, keeps thinking, notes and bash, and trun
     msg("u", null, { role: "user", content: [{ type: "text", text: "跑测试" }, { type: "image", data: "x", mimeType: "image/png" }] }),
     msg("a", "u", { role: "assistant", content: [{ type: "thinking", thinking: "先跑一下" }, { type: "text", text: "我来运行" }, { type: "toolCall", id: "c1", name: "bash", arguments: { command: "npm   test" } }, { type: "toolCall", id: "c2", name: "read", arguments: { path: "/a.ts" } }] }),
     msg("r1", "a", { role: "toolResult", toolCallId: "c1", toolName: "bash", content: [{ type: "text", text: "x".repeat(30_000) }], isError: true }),
-    msg("r2", "r1", { role: "toolResult", toolCallId: "c2", toolName: "read", content: [{ type: "text", text: "file" }], isError: false }),
+    msg("r2", "r1", { role: "toolResult", toolCallId: "c2", toolName: "read", content: [{ type: "image", data: "eA==", mimeType: "image/jpeg" }], isError: false }),
     { type: "compaction", id: "c", parentId: "r2", timestamp: "t", summary: "之前讨论了测试", tokensBefore: 1 },
     msg("b", "c", { role: "bashExecution", command: "ls", output: "a b", exitCode: 1, cancelled: false, truncated: false }),
     msg("e", "b", { role: "assistant", content: [], stopReason: "error", errorMessage: "rate limited" }),
   ]);
   const items: any[] = buildTranscript(raw);
   assert.deepEqual(items.map(i => i.kind), ["user", "assistant", "note", "assistant", "assistant"]);
-  assert.equal(items[0].images, 1);
+  assert.deepEqual(items[0].images, [{ entry: "u", n: 0, mimeType: "image/png" }]);
+  assert.deepEqual([items[1].tools[1].output, items[1].tools[1].images], ["", [{ entry: "r2", n: 0, mimeType: "image/jpeg" }]]);
+  assert.deepEqual(findImage(raw, "r2", 0), { data: Buffer.from("x"), mimeType: "image/jpeg" });
+  assert.equal(findImage(raw, "r2", 1), undefined);
   assert.equal(items[1].thinking, "先跑一下");
   assert.deepEqual(items[1].tools.map((t: any) => [t.name, t.summary, t.isError]), [["bash", "npm test", true], ["read", "/a.ts", false]]);
   assert.ok(items[1].tools[0].output.length < 21_000 && items[1].tools[0].output.includes("已截断"));
@@ -432,4 +447,54 @@ test("server storage: lists locations and moves plugin data with a merge", async
   env.PI_SESSIONS_DATA_DIR = sync;
   assert.equal((await call("/api/storage/data", { dir: join(root, "x") })).status, 409, "env var locks the location");
   assert.equal((await (await call("/api/storage")).json()).data.source, "env");
+});
+
+test("export: images from every branch, safe folder names", () => {
+  const raw = sessionFile("abcdef123456", "/w", [["user", "hi"]], [
+    { type: "message", id: "u", parentId: "e0", timestamp: "t", message: { role: "user", content: [{ type: "image", data: "YQ==", mimeType: "image/png" }] } },
+    { type: "message", id: "r", parentId: "e0", timestamp: "t", message: { role: "toolResult", toolCallId: "c", content: [{ type: "text", text: "x" }, { type: "image", data: "Yg==", mimeType: "image/jpeg" }] } },
+  ]);
+  assert.deepEqual(sessionImages(raw).map(i => [i.data.toString(), i.mimeType, i.role]), [["a", "image/png", "用户"], ["b", "image/jpeg", "工具"]]);
+  assert.equal(parseSession("/x", raw, new Date(0))!.images, 2);
+  const name = folderName({ id: "abcdef123456", created: "2026-09-23T08:00:00.000Z" }, '修复 a/b: "滚动"?.. ');
+  assert.match(name, /^2026-09-2\d_修复 a b 滚动_abcdef12$/, "unsafe characters and trailing dots are removed");
+});
+
+test("server exports images to the chosen folder, keeps the folder after a rename, and only writes new files", async t => {
+  const root = await temp(t), sessions = join(root, "sessions"), home = join(root, "data"), token = "e".repeat(32);
+  await mkdir(join(sessions, "p"), { recursive: true });
+  const file = join(sessions, "p", "a.jsonl"), pic = (id: string, parent: string, data: string) => ({ type: "message", id, parentId: parent, timestamp: "2026-09-23T08:05:00.000Z", message: { role: "user", content: [{ type: "text", text: "看图" }, { type: "image", data, mimeType: "image/png" }] } });
+  await writeFile(file, sessionFile("sess1234abcd", "/w", [["user", "截图问题"]], [pic("u1", "e0", "YQ==")]));
+  await writeFile(join(sessions, "p", "b.jsonl"), sessionFile("noimages", "/w", [["user", "纯文字"]]));
+  await writeFile(join(root, "index.html"), "");
+  const location = new DataLocation(home, {});
+  const server = new SessionsServer({ root: sessions, metaFile: join(home, "meta.json"), location, webFile: join(root, "index.html"), token });
+  const base = (await server.start()).replace(/\/#.*/, "");
+  t.after(() => server.close());
+  const call = (path: string, body?: object) => fetch(base + path, body ? { method: "POST", headers: { "x-token": token, "content-type": "application/json" }, body: JSON.stringify(body) } : { headers: { "x-token": token } });
+
+  const list = await (await call("/api/sessions")).json();
+  assert.deepEqual(Object.fromEntries(list.sessions.map((s: any) => [s.id, s.images])), { sess1234abcd: 1, noimages: 0 });
+  assert.equal((await call("/api/storage/images", { dir: "relative" })).status, 400);
+  const out = join(root, "我的图片");
+  let st = await (await call("/api/storage/images", { dir: out })).json();
+  assert.deepEqual([st.images.dir, st.images.isDefault, st.images.count, st.images.sessions], [out, false, 1, 1]);
+  assert.equal(JSON.parse(await readFile(join(home, "config.json"), "utf8")).imageDir, out, "remembered in config.json");
+
+  let r = await (await call("/api/images/export", { ids: ["sess1234abcd"] })).json();
+  const folder = r.folder as string;
+  assert.match(folder, /截图问题_sess1234$/);
+  assert.deepEqual([r.dir, r.sessions, r.images, r.written], [out, 1, 1, 1]);
+  assert.equal(await readFile(join(folder, "001-用户.png"), "utf8"), "a");
+
+  // Renamed and one more image: same folder, only the new file is written.
+  await server.meta.patch("sess1234abcd", { title: "新标题" });
+  await appendFile(file, JSON.stringify(pic("u2", "u1", "Yg==")) + "\n");
+  r = await (await call("/api/images/export", {})).json();
+  assert.deepEqual([r.sessions, r.images, r.written, r.folder], [1, 2, 1, folder]);
+  assert.equal(await readFile(join(folder, "002-用户.png"), "utf8"), "b");
+
+  st = await (await call("/api/storage/images", { dir: "" })).json();
+  assert.equal(st.images.isDefault, true);
+  assert.equal(JSON.parse(await readFile(join(home, "config.json"), "utf8")).imageDir, undefined);
 });

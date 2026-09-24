@@ -36,15 +36,33 @@ export class DataLocation {
   }
   /** undefined goes back to the default dir. */
   async set(dir: string | undefined): Promise<void> {
+    await this.patchConfig({ dataDir: dir && resolve(dir) !== resolve(this.defaultDir) ? dir : undefined });
+  }
+
+  /** Where "export images" writes; a missing or bad setting falls back to the default. */
+  async imageDir(): Promise<{ dir: string; isDefault: boolean }> {
+    try {
+      const { imageDir } = JSON.parse(await readFile(this.configFile, "utf8"));
+      if (typeof imageDir === "string" && imageDir) return { dir: expandDir(imageDir), isDefault: false };
+    } catch {}
+    return { dir: DEFAULT_IMAGE_DIR, isDefault: true };
+  }
+  async setImageDir(dir: string | undefined): Promise<void> {
+    await this.patchConfig({ imageDir: dir && resolve(dir) !== resolve(DEFAULT_IMAGE_DIR) ? dir : undefined });
+  }
+
+  private async patchConfig(patch: Record<string, string | undefined>): Promise<void> {
     let config: Record<string, unknown> = {};
     try { config = JSON.parse(await readFile(this.configFile, "utf8")) ?? {}; } catch {}
-    if (dir && resolve(dir) !== resolve(this.defaultDir)) config.dataDir = dir; else delete config.dataDir;
+    for (const [k, v] of Object.entries(patch)) if (v === undefined) delete config[k]; else config[k] = v;
     await mkdir(this.defaultDir, { recursive: true });
     const tmp = `${this.configFile}.${process.pid}.tmp`;
     await writeFile(tmp, JSON.stringify(config, null, 1), { mode: 0o600 });
     await rename(tmp, this.configFile);
   }
 }
+
+export const DEFAULT_IMAGE_DIR = join(homedir(), "Pictures", "pi-sessions");
 
 /** Fails with a readable message when the folder cannot be created or written. */
 export async function checkWritable(dir: string): Promise<void> {

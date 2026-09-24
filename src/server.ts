@@ -8,8 +8,9 @@ import { SessionScanner, searchSnippet, type SessionRecord } from "./scan.ts";
 import { MetaStore, type MetaPatch } from "./meta.ts";
 import { Organizer, organizeOne, type ModelContext } from "./organize.ts";
 import { askSessions } from "./ask.ts";
-import { checkWritable, expandDir, openPath, type DataLocation } from "./storage.ts";
-import { buildTranscript, firstMatch, type TranscriptItem } from "./transcript.ts";
+import { checkWritable, DEFAULT_IMAGE_DIR, expandDir, openPath, type DataLocation } from "./storage.ts";
+import { exportImages } from "./export.ts";
+import { buildTranscript, findImage, firstMatch, type TranscriptItem } from "./transcript.ts";
 
 /** What the server needs from the live pi runtime; replaced on every session_start. */
 export interface Binding {
@@ -29,6 +30,10 @@ export interface ServerOptions {
   settingsFile?: string; }
 
 class HttpError extends Error { constructor(readonly status: number, message: string) { super(message); } }
+/** A non-JSON response body. */
+class Binary { constructor(readonly data: Buffer, readonly type: string) {} }
+/** Raster types only: anything else (e.g. SVG with scripts) is sent as a download. */
+const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/avif"]);
 
 export class SessionsServer {
   binding?: Binding;
@@ -42,6 +47,8 @@ export class SessionsServer {
   private transcripts = new Map<string, { version: string; items: TranscriptItem[] }>();
   /** Model picked on the page for each queued organize job ("provider/id"); absent means follow pi. */
   private organizeModels = new Map<string, string>();
+  /** Export folder when there is no DataLocation to keep it in (tests). */
+  private imageDirSetting?: string;
 
   constructor(private opts: ServerOptions) {
     this.meta = new MetaStore(opts.metaFile);
@@ -90,7 +97,9 @@ export class SessionsServer {
       count: records.filter(r => inside(r.path, dir)).length,
     })));
     const data = this.opts.location ? await this.opts.location.resolve() : { dir: dirname(meta.file), source: "default" as const };
+    const images = await this.imageDir();
     return {
+      images: { ...images, exists: !!(await stat(images.dir).catch(() => undefined))?.isDirectory(), count: records.reduce((n, r) => n + r.images, 0), sessions: records.filter(r => r.images).length },
       sessions: { dirs, settingsFile: this.opts.settingsFile },
       data: { ...data, defaultDir: this.opts.location?.defaultDir ?? data.dir, movable: !!this.opts.location },
     };
@@ -112,6 +121,17 @@ export class SessionsServer {
     await to.mergeFrom(from);
     await loc.set(target);
     this.meta = to;
+  }
+
+  private async imageDir(): Promise<{ dir: string; isDefault: boolean }> {
+    if (this.opts.location) return this.opts.location.imageDir();
+    return this.imageDirSetting ? { dir: this.imageDirSetting, isDefault: false } : { dir: DEFAULT_IMAGE_DIR, isDefault: true };
+  }
+  private async setImageDir(input: string | undefined): Promise<void> {
+    let dir: string | undefined;
+    try { dir = input ? expandDir(input) : undefined; } catch (e) { throw new HttpError(400, (e as Error).message); }
+    try { await checkWritable(dir ?? DEFAULT_IMAGE_DIR); } catch (e) { throw new HttpError(400, (e as Error).message); }
+    if (this.opts.location) await this.opts.location.setImageDir(dir); else this.imageDirSetting = dir;
   }
 
   private async refresh(): Promise<SessionRecord[]> { return this.records = await this.scanner.scan(); }
@@ -162,6 +182,12 @@ export class SessionsServer {
       const aborter = new AbortController();
       res.on("close", () => { if (!res.writableFinished) aborter.abort(); });
       const data = await this.route(req.method ?? "GET", url, body, aborter.signal);
+      if (data instanceof Binary) {
+        // An entry's images never change, so the browser may keep them.
+        res.writeHead(200, { "content-type": data.type, "content-length": data.data.length, "cache-control": "private, max-age=86400", "x-content-type-options": "nosniff" });
+        res.end(data.data);
+        return;
+      }
       if (req.method === "GET") {
         // The page polls; answer 304 when nothing changed so it neither re-downloads nor re-renders.
         const text = JSON.stringify(data), etag = `"${createHash("sha1").update(text).digest("base64url")}"`;
@@ -190,7 +216,7 @@ export class SessionsServer {
         organize: this.organizer.status,
         sessions: records.map(r => ({
           id: r.id, path: r.path, cwd: r.cwd, name: r.name, model: r.model, parent: r.parent,
-          created: r.created, modified: r.modified, count: r.count, firstUser: r.firstUser, meta: meta[r.id] ?? {},
+          created: r.created, modified: r.modified, count: r.count, images: r.images, firstUser: r.firstUser, meta: meta[r.id] ?? {},
         })),
       };
     }
@@ -201,6 +227,13 @@ export class SessionsServer {
       const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit")) || 40));
       const words = (url.searchParams.get("q") ?? "").toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
       return { id: r.id, total: items.length, offset, items: items.slice(offset, offset + limit), firstMatch: offset === 0 ? firstMatch(items, words) : undefined };
+    }
+    if (method === "GET" && p === "/api/image") {
+      const r = await this.find(url.searchParams.get("id"));
+      const raw = await readFile(r.path, "utf8").catch(() => { throw new HttpError(404, "读取会话文件失败，可能已被删除"); });
+      const img = findImage(raw, url.searchParams.get("entry") ?? "", Number(url.searchParams.get("n")) || 0);
+      if (!img) throw new HttpError(404, "找不到这张图片");
+      return new Binary(img.data, IMAGE_TYPES.has(img.mimeType) ? img.mimeType : "application/octet-stream");
     }
     if (method === "GET" && p === "/api/search") {
       const words = (url.searchParams.get("q") ?? "").toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
@@ -259,8 +292,8 @@ export class SessionsServer {
     if (method === "GET" && p === "/api/storage") return this.storage();
     if (method === "POST" && p === "/api/storage/open") {
       // Only folders the page lists, never an arbitrary path from the request.
-      const { sessions, data } = await this.storage();
-      const allowed = [...sessions.dirs.filter(d => d.exists).map(d => d.path), data.dir];
+      const { sessions, data, images } = await this.storage();
+      const allowed = [...sessions.dirs.filter(d => d.exists).map(d => d.path), data.dir, ...(images.exists ? [images.dir] : [])];
       if (typeof body.path !== "string" || !allowed.includes(body.path)) throw new HttpError(400, "不能打开这个位置");
       openPath(body.path);
       return { ok: true };
@@ -268,6 +301,20 @@ export class SessionsServer {
     if (method === "POST" && p === "/api/storage/data") {
       await this.moveData(typeof body.dir === "string" && body.dir.trim() ? body.dir : undefined);
       return this.storage();
+    }
+    if (method === "POST" && p === "/api/storage/images") {
+      await this.setImageDir(typeof body.dir === "string" && body.dir.trim() ? body.dir : undefined);
+      return this.storage();
+    }
+    if (method === "POST" && p === "/api/images/export") {
+      // ids: one or more sessions; absent: every session that has images.
+      const records = Array.isArray(body.ids) ? await Promise.all(body.ids.map((id: unknown) => this.find(id))) : (await this.refresh()).filter(r => r.images);
+      const meta = await (await this.currentMeta()).all(), { dir } = await this.imageDir();
+      try { await checkWritable(dir); } catch (e) { throw new HttpError(400, (e as Error).message); }
+      const result = await exportImages(records.map(r => ({ record: r, title: meta[r.id]?.title || r.name || r.firstUser })), dir);
+      // Show the result: the session's own folder for one session, otherwise the export folder.
+      if (body.reveal && result.images) openPath(result.folder ?? dir);
+      return result;
     }
     if (method === "POST" && p === "/api/organize/cancel") { this.organizer.cancel(); return { organize: this.organizer.status }; }
     throw new HttpError(404, "not found");

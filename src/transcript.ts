@@ -1,21 +1,23 @@
 import { readFile } from "node:fs/promises";
 
-export interface ToolItem { id: string; name: string; summary: string; args: string; output?: string; isError?: boolean; }
+/** Where an image sits in the session file; the bytes are served separately by /api/image. */
+export interface ImageRef { entry: string; n: number; mimeType: string; }
+export interface ToolItem { id: string; name: string; summary: string; args: string; output?: string; isError?: boolean; images?: ImageRef[]; }
 export type TranscriptItem =
-  | { kind: "user"; text: string; images: number; time?: string }
+  | { kind: "user"; text: string; images: ImageRef[]; time?: string }
   | { kind: "assistant"; text: string; thinking?: string; tools: ToolItem[]; error?: string; model?: string; time?: string }
   | { kind: "note"; title: string; text: string; time?: string };
 
 const TEXT_MAX = 200_000, ARGS_MAX = 4_000, OUTPUT_MAX = 20_000;
 const cut = (s: string, n: number) => s.length > n ? s.slice(0, n) + `\n…（已截断，共 ${s.length.toLocaleString()} 字）` : s;
 
-function parts(content: unknown): { text: string; images: number; thinking: string; calls: any[] } {
-  if (typeof content === "string") return { text: content, images: 0, thinking: "", calls: [] };
-  const out = { text: "", images: 0, thinking: "", calls: [] as any[] };
+function parts(content: unknown): { text: string; images: string[]; thinking: string; calls: any[] } {
+  if (typeof content === "string") return { text: content, images: [], thinking: "", calls: [] };
+  const out = { text: "", images: [] as string[], thinking: "", calls: [] as any[] };
   const texts: string[] = [], thoughts: string[] = [];
   for (const p of Array.isArray(content) ? content : []) {
     if (p?.type === "text" && typeof p.text === "string") texts.push(p.text);
-    else if (p?.type === "image") out.images++;
+    else if (p?.type === "image") out.images.push(String(p.mimeType ?? ""));
     else if (p?.type === "thinking" && typeof p.thinking === "string" && p.thinking.trim()) thoughts.push(p.thinking);
     else if (p?.type === "toolCall") out.calls.push(p);
   }
@@ -54,6 +56,22 @@ export function activeBranch(raw: string): any[] {
   return path.reverse();
 }
 
+const refs = (entry: string, mimeTypes: string[]): ImageRef[] => entry ? mimeTypes.map((mimeType, n) => ({ entry, n, mimeType })) : [];
+
+/** The n-th image of a message entry on any branch, as bytes. */
+export function findImage(raw: string, entry: string, n: number): { data: Buffer; mimeType: string } | undefined {
+  for (const line of raw.split("\n")) {
+    if (!line.includes(entry)) continue;
+    let e: any;
+    try { e = JSON.parse(line); } catch { continue; }
+    if (e.id !== entry || !Array.isArray(e.message?.content)) continue;
+    const img = e.message.content.filter((p: any) => p?.type === "image")[n];
+    if (!img || typeof img.data !== "string") return undefined;
+    return { data: Buffer.from(img.data, "base64"), mimeType: String(img.mimeType ?? "") };
+  }
+  return undefined;
+}
+
 export function buildTranscript(raw: string): TranscriptItem[] {
   const items: TranscriptItem[] = [], calls = new Map<string, ToolItem>();
   for (const e of activeBranch(raw)) {
@@ -65,7 +83,7 @@ export function buildTranscript(raw: string): TranscriptItem[] {
     const m = e.message;
     if (m.role === "user") {
       const p = parts(m.content);
-      if (p.text.trim() || p.images) items.push({ kind: "user", text: cut(p.text, TEXT_MAX), images: p.images, time });
+      if (p.text.trim() || p.images.length) items.push({ kind: "user", text: cut(p.text, TEXT_MAX), images: refs(e.id, p.images), time });
     } else if (m.role === "assistant") {
       const p = parts(m.content);
       const tools = p.calls.map(c => {
@@ -77,8 +95,8 @@ export function buildTranscript(raw: string): TranscriptItem[] {
       if (p.text.trim() || tools.length || error || p.thinking) items.push({ kind: "assistant", text: cut(p.text, TEXT_MAX), thinking: p.thinking ? cut(p.thinking, TEXT_MAX) : undefined, tools, error, model: m.model, time });
     } else if (m.role === "toolResult") {
       const t = calls.get(String(m.toolCallId ?? ""));
-      const p = parts(m.content), output = cut(p.text + (p.images ? `\n[${p.images} 张图片]` : ""), OUTPUT_MAX);
-      if (t) { t.output = output; t.isError = !!m.isError; }
+      const p = parts(m.content), images = refs(e.id, p.images);
+      if (t) { t.output = cut(p.text, OUTPUT_MAX); t.isError = !!m.isError; if (images.length) t.images = images; }
     } else if (m.role === "bashExecution") {
       const tool: ToolItem = { id: "", name: "bash", summary: `! ${String(m.command ?? "")}`.slice(0, 160), args: String(m.command ?? ""), output: cut(String(m.output ?? ""), OUTPUT_MAX), isError: typeof m.exitCode === "number" && m.exitCode !== 0 };
       items.push({ kind: "assistant", text: "", tools: [tool], time });

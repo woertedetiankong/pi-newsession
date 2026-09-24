@@ -13,7 +13,7 @@
 pi install git:github.com/woertedetiankong/pi-newsession
 
 # 或锁定到某个版本，不随仓库更新而变化
-pi install git:github.com/woertedetiankong/pi-newsession@v0.1.4
+pi install git:github.com/woertedetiankong/pi-newsession@v0.1.5
 
 # 或只装到当前项目（写入 .pi/settings.json）
 pi install git:github.com/woertedetiankong/pi-newsession -l
@@ -45,6 +45,8 @@ pi -e git:github.com/woertedetiankong/pi-newsession
 - AI 回复按 Markdown 渲染：标题、列表、表格、代码块、链接。
 - 工具调用默认折叠为一行（如 `bash npm test`），点开查看参数和输出；失败的调用标红。单个工具输出超过 2 万字时截断。
 - 思考过程、上下文压缩、分支摘要折叠显示。
+- 复制：鼠标移到消息上，右上角「复制全文」复制这条消息的原始 Markdown；代码块、工具参数和输出右上角的「复制」只复制那一块。
+- 图片：你发给 AI 的图片、工具读到的图片（如截图）显示为缩略图，点击放大，可「下载图片」保存到本地。图片本来就存在 pi 的会话文件里，页面只是把它读出来，不另外复制。
 - 滚动到底部自动加载更多；从搜索进入时自动跳到第一处命中并高亮关键词。
 - 正在进行的会话有新消息时不会打断阅读，底部会出现「有新消息，刷新」。
 - 「⤢ 专注阅读」隐藏会话列表、加宽对话区，`Esc` 退出。
@@ -131,6 +133,13 @@ ssh -L 47291:127.0.0.1:47291 你的服务器
 - 这个设置保存在本机的 `~/.pi/agent/pi-sessions/config.json`。访问令牌 `token` 也始终留在这里，不会进入同步文件夹。
 
 也可以用环境变量 `PI_SESSIONS_DATA_DIR` 指定（优先于页面上的设置，设置后页面上不能再改）。第一次使用时，插件会把默认位置的 `meta.json` 复制过去，新位置已有 `meta.json` 时不会覆盖。
+
+**导出图片到文件夹**：会话里的图片本来存在会话文件内。想要单独的图片文件时：
+
+- 在「存储位置」的「导出图片」里填一个文件夹，点「设为导出位置」。默认是 `~/Pictures/pi-sessions`，设置保存在 `~/.pi/agent/pi-sessions/config.json`。
+- 在会话详情点「🖼 导出图片（N）」导出这一个会话，或者在「存储位置」里点「导出全部会话的图片」。导出完成后会自动打开文件夹。
+- 每个会话一个子文件夹，名字是 `日期_标题_会话id前8位`，图片按出现顺序命名，例如 `001-用户.png`、`002-工具.png`。包括所有分支上的图片。
+- 再次导出只会补上新图片；会话改名后仍写进原来的文件夹。已有文件不会被删除或修改，会话文件里的原图也不受影响。
 
 **在多台电脑之间同步或备份**：把对话目录（`sessionDir`）和插件数据都放进同一个同步文件夹（iCloud、Dropbox、OneDrive 等），这样对话和整理结果会一起过去。避免两台电脑同时打开同一个会话，以免同步冲突。
 

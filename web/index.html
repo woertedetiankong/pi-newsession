@@ -156,6 +156,25 @@ section.preview { overflow-y: auto; background: var(--panel); }
 .tool[open] { padding-bottom: 6px; }
 .tool .tlabel, .tool pre { margin-left: 10px; margin-right: 10px; }
 .tlabel { font-size: 11px; color: var(--faint); margin-top: 4px; }
+.msg { position: relative; }
+.codebox { position: relative; }
+.tool .codebox { margin: 0 10px; }
+.tool .codebox pre { margin-left: 0; margin-right: 0; }
+.copy { position: absolute; top: 4px; right: 4px; font-size: 11.5px; padding: 2px 8px; border-radius: 5px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--muted); opacity: 0; transition: opacity .12s; }
+.codebox .copy { top: 10px; right: 6px; }
+.copy:hover { color: var(--text); }
+.msg:hover > .copy, .codebox:hover > .copy, .copy:focus-visible { opacity: 1; }
+@media (hover: none) { .copy { opacity: .7; } }
+.shots { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.tool .shots { margin: 6px 10px; }
+.shot { padding: 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--bg); cursor: zoom-in; }
+.shot img { display: block; max-width: 220px; max-height: 160px; min-width: 40px; min-height: 40px; object-fit: contain; }
+.shot.err { padding: 6px 10px; font-size: 12px; color: var(--faint); cursor: default; }
+#imgview { border: none; padding: 0; background: transparent; max-width: 94vw; max-height: 94vh; }
+#imgview::backdrop { background: rgba(0,0,0,.75); }
+#imgview img { display: block; max-width: 94vw; max-height: calc(94vh - 48px); object-fit: contain; border-radius: 6px; background: var(--panel); }
+#imgview .bar { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+#imgview .btn { background: var(--panel); color: var(--text); text-decoration: none; }
 .thinking { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
 .thinking > summary { cursor: pointer; }
 .thinking .md { border-left: 2px solid var(--line-strong); padding-left: 10px; margin-top: 4px; }
@@ -255,6 +274,7 @@ dialog.dlg::backdrop { background: rgba(0,0,0,.35); }
 <div class="toast" id="toast"></div>
 <dialog class="dlg" id="storage"></dialog>
 
+<dialog id="imgview"><img alt=""><div class="bar"><a class="btn" id="imgview-save" download>下载图片</a><button class="btn" data-close>关闭</button></div></dialog>
 <script>
 const TOKEN = (() => {
   const m = location.hash.match(/token=([a-f0-9]+)/);
@@ -513,7 +533,7 @@ async function openStorage() {
   try { state.storage = await api("/api/storage"); } catch (e) { state.storage = { error: e.message }; }
   renderStorage();
 }
-function renderStorage(error = "") {
+function renderStorage(error = "", imgError = "") {
   const st = state.storage, head = `<div class="dlg-head"><h2>存储位置</h2><button data-st="close" title="关闭 (Esc)">✕</button></div>`;
   if (!st) { $("storage").innerHTML = head + `<div class="empty">正在读取…</div>`; return; }
   if (st.error) { $("storage").innerHTML = head + `<div class="empty">${esc(st.error)}</div>`; return; }
@@ -534,7 +554,13 @@ function renderStorage(error = "") {
         <p>保存后重启 pi 生效，新目录会自动出现在上面的列表里。已有的对话不会自动搬过去，需要的话把旧目录里的内容手动移过去。也可以用启动参数 <code>pi --session-dir &lt;目录&gt;</code> 临时指定。</p>
       </details></section>
     <section><h3>插件数据<span class="sub">AI 标题、摘要、标签、置顶、归档</span></h3>
-      <div class="loc"><div><div class="path">${esc(tilde(data.dir))}</div><div class="loc-meta">${where}</div></div>${openBtn(data.dir)}</div>${move}</section>`;
+      <div class="loc"><div><div class="path">${esc(tilde(data.dir))}</div><div class="loc-meta">${where}</div></div>${openBtn(data.dir)}</div>${move}</section>
+    <section><h3>导出图片<span class="sub">把会话里的图片存成单独的文件</span></h3>
+      <div class="loc"><div><div class="path">${esc(tilde(st.images.dir))}</div><div class="loc-meta">${st.images.isDefault ? "默认位置" : "自定义位置"} · ${st.images.count ? `共 ${st.images.count} 张图片，在 ${st.images.sessions} 个会话里` : "会话里还没有图片"}</div></div>${openBtn(st.images.dir, st.images.exists)}</div>
+      <form class="move" id="imgForm"><input id="imgDir" placeholder="换个文件夹，例如 ~/Documents/pi-images" autocomplete="off" spellcheck="false"><button class="btn">设为导出位置</button></form>
+      ${imgError ? `<p class="err">${esc(imgError)}</p>` : ""}
+      <p class="fine">每个会话一个子文件夹（日期_标题_会话 id），图片按出现顺序命名，例如 <code>001-用户.png</code>、<code>002-工具.png</code>。再次导出只会补上新增的图片，不会删除或改动已有文件。会话文件里的原图不受影响。${st.images.isDefault ? "" : ` <button data-st="img-reset">恢复默认位置</button>`}</p>
+      ${st.images.count ? `<button class="btn primary" data-st="export-all">导出全部会话的图片</button>` : ""}</section>`;
 }
 async function moveData(dir) {
   const label = dir || tilde(state.storage.data.defaultDir);
@@ -552,9 +578,31 @@ $("storage").addEventListener("click", async e => {
   if (a === "open") { try { await api("/api/storage/open", { path: b.dataset.path }); } catch (err) { toast(err.message); } }
   if (a === "copy") { try { await navigator.clipboard.writeText(SESSION_DIR_EXAMPLE); toast("已复制"); } catch { prompt("复制这一项：", SESSION_DIR_EXAMPLE); } }
   if (a === "reset") moveData("");
+  if (a === "img-reset") setImageDir("");
+  if (a === "export-all") {
+    b.disabled = true; b.innerHTML = `<span class="spin"></span>正在导出…`;
+    try { toast(exportedMsg(await api("/api/images/export", { reveal: true }))); } catch (err) { toast(err.message); }
+    openStorage();
+  }
 });
+async function setImageDir(dir) {
+  try { state.storage = await api("/api/storage/images", { dir }); renderStorage(); toast("导出位置已设为 " + tilde(state.storage.images.dir)); }
+  catch (e) { renderStorage("", e.message); if (dir) $("imgDir").value = dir; }
+}
+const exportedMsg = r => !r.images ? "没有可导出的图片" : `已导出 ${r.images} 张图片${!r.written ? "（都已导出过）" : r.written < r.images ? `（新写入 ${r.written} 张，其余已导出过）` : ""} → ${tilde(r.folder ?? r.dir)}`;
+async function exportSessionImages(s) {
+  let dir;
+  try { dir = (await api("/api/storage")).images.dir; } catch (e) { return toast(e.message); }
+  if (!confirm(`把这个会话的 ${s.images} 张图片导出到：\n${tilde(dir)}\n\n会放在以会话标题命名的子文件夹里，完成后自动打开。\n要换位置，点左栏「存储位置」。`)) return;
+  try { toast(exportedMsg(await api("/api/images/export", { ids: [s.id], reveal: true }))); } catch (e) { toast(e.message); }
+}
 $("storage").addEventListener("submit", e => {
   e.preventDefault();
+  if (e.target.id === "imgForm") {
+    const dir = $("imgDir").value.trim();
+    if (!dir) { $("imgDir").focus(); return; }
+    setImageDir(dir); return;
+  }
   const dir = $("moveDir").value.trim();
   if (!dir) { $("moveDir").focus(); return; }
   moveData(dir);
@@ -594,7 +642,7 @@ function md(src) {
     if (fence) {
       const buf = []; i++;
       while (i < lines.length && !lines[i].trim().startsWith(fence[1])) buf.push(lines[i++]);
-      i++; out.push(`<pre><code>${esc(buf.join("\n"))}</code></pre>`); continue;
+      i++; out.push(codeBox(`<code>${esc(buf.join("\n"))}</code>`)); continue;
     }
     const h = l.match(/^(#{1,6})\s+(.*)/);
     if (h) { out.push(`<div class="md-h md-h${Math.min(h[1].length, 3)}">${inlineMd(h[2])}</div>`); i++; continue; }
@@ -639,19 +687,49 @@ function markWords(root, words) {
 // ---- 完整对话：分页加载当前分支 ----
 const PAGE = 40;
 const txKey = s => s.id;
-function toolHtml(t) {
-  return `<details class="tool${t.isError ? " err" : ""}"><summary><span class="tname">${esc(t.name)}</span><span class="tsum">${esc(t.summary)}</span>${t.isError ? `<span class="terr">失败</span>` : t.output === undefined ? `<span class="terr" style="color:var(--faint)">无结果</span>` : ""}</summary>
-    ${t.args ? `<div class="tlabel">参数</div><pre>${esc(t.args)}</pre>` : ""}${t.output !== undefined ? `<div class="tlabel">输出</div><pre>${esc(t.output || "（空）")}</pre>` : ""}</details>`;
+const IMG_EXT = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp", "image/bmp": "bmp", "image/avif": "avif" };
+function shotsHtml(s, images) {
+  if (!images?.length) return "";
+  return `<div class="shots">${images.map(im => `<button class="shot" data-img="${esc(`/api/image?id=${encodeURIComponent(s.id)}&entry=${encodeURIComponent(im.entry)}&n=${im.n}`)}" data-name="${esc(`${s.id.slice(0, 8)}-${im.entry}-${im.n + 1}.${IMG_EXT[im.mimeType] || "bin"}`)}" title="点击放大 / 下载"><img alt="图片"></button>`).join("")}</div>`;
 }
-function itemHtml(it, idx) {
+// <img> cannot send the token header, so images are fetched and shown as blob URLs.
+const blobs = new Map();
+function loadShots(root) {
+  for (const b of root.querySelectorAll(".shot[data-img]:not([data-loaded])")) {
+    b.dataset.loaded = "1";
+    let p = blobs.get(b.dataset.img);
+    if (!p) {
+      p = fetch(b.dataset.img, { headers: { "x-token": TOKEN } }).then(r => r.ok ? r.blob() : Promise.reject()).then(x => URL.createObjectURL(x));
+      p.catch(() => blobs.delete(b.dataset.img));
+      blobs.set(b.dataset.img, p);
+    }
+    p.then(u => { b.querySelector("img").src = u; b.dataset.url = u; }, () => { b.classList.add("err"); b.textContent = "[图片读取失败]"; });
+  }
+}
+const COPY_BTN = `<button class="copy" data-copy title="复制">复制</button>`;
+const MSG_COPY_BTN = `<button class="copy" data-copy title="复制这条消息的原始 Markdown">复制全文</button>`;
+const codeBox = inner => `<div class="codebox"><pre>${inner}</pre>${COPY_BTN}</div>`;
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    const ta = Object.assign(document.createElement("textarea"), { value: text });
+    document.body.append(ta); ta.select(); document.execCommand("copy"); ta.remove();
+  }
+  toast("已复制");
+}
+function toolHtml(t, s) {
+  return `<details class="tool${t.isError ? " err" : ""}"><summary><span class="tname">${esc(t.name)}</span><span class="tsum">${esc(t.summary)}</span>${t.isError ? `<span class="terr">失败</span>` : t.output === undefined ? `<span class="terr" style="color:var(--faint)">无结果</span>` : ""}</summary>
+    ${t.args ? `<div class="tlabel">参数</div>${codeBox(esc(t.args))}` : ""}${t.output !== undefined && (t.output || !t.images) ? `<div class="tlabel">输出</div>${codeBox(esc(t.output || "（空）"))}` : ""}${shotsHtml(s, t.images)}</details>`;
+}
+function itemHtml(it, idx, s) {
   const time = it.time ? ` title="${esc(fmtFull(it.time))}"` : "";
   if (it.kind === "note") return `<div class="note" data-idx="${idx}"${time}><details><summary>ℹ︎ ${esc(it.title)}</summary><div class="md">${md(it.text)}</div></details></div>`;
-  if (it.kind === "user") return `<div class="msg user" data-idx="${idx}"${time}><div class="who">你</div><div class="body md">${md(it.text)}${it.images ? `<p class="hint">[${it.images} 张图片]</p>` : ""}</div></div>`;
+  if (it.kind === "user") return `<div class="msg user" data-idx="${idx}"${time}><div class="who">你</div><div class="body md">${md(it.text)}${shotsHtml(s, it.images)}</div>${it.text.trim() ? MSG_COPY_BTN : ""}</div>`;
   return `<div class="msg assistant" data-idx="${idx}"${time}><div class="who">AI</div><div class="body">
     ${it.thinking ? `<details class="thinking"><summary>💭 思考过程</summary><div class="md">${md(it.thinking)}</div></details>` : ""}
     ${it.text ? `<div class="md">${md(it.text)}</div>` : ""}
-    ${it.tools.map(toolHtml).join("")}
-    ${it.error ? `<div class="terr-box">⚠︎ ${esc(it.error)}</div>` : ""}</div></div>`;
+    ${it.tools.map(t => toolHtml(t, s)).join("")}
+    ${it.error ? `<div class="terr-box">⚠︎ ${esc(it.error)}</div>` : ""}</div>${it.text.trim() ? MSG_COPY_BTN : ""}</div>`;
 }
 let txObserver;
 async function loadTx(s, until) {
@@ -669,7 +747,8 @@ async function loadTx(s, until) {
     if (state.selected !== s.id) return;
     const box = $("pv-tx"); if (!box) return;
     const frag = document.createElement("div");
-    frag.innerHTML = r.items.map((it, k) => itemHtml(it, start + k)).join("");
+    frag.innerHTML = r.items.map((it, k) => itemHtml(it, start + k, s)).join("");
+    loadShots(frag);
     markWords(frag, words);
     box.append(...frag.childNodes);
     renderTxFoot(s);
@@ -722,6 +801,7 @@ function headHtml(s) {
       <button class="btn" data-act="rename">重命名</button>
       <button class="btn" data-act="pin">${s.meta.pinned ? "取消置顶" : "置顶"}</button>
       <button class="btn" data-act="archive">${s.meta.archived ? "取消归档" : "归档"}</button>
+      ${s.images ? `<button class="btn" data-act="export-images" title="把这个会话里的图片存成单独的文件">🖼 导出图片（${s.images}）</button>` : ""}
       <button class="btn" data-act="organize" ${organizing ? "disabled style='opacity:.5'" : ""}>✨ ${s.meta.organizedAt ? "重新生成摘要" : "AI 生成标题"}</button>
       <button class="btn focus-btn" data-act="reading" title="隐藏会话列表，加宽对话区（Esc 退出）">${reading ? "⤡ 退出专注" : "⤢ 专注阅读"}</button>
     </div>
@@ -817,6 +897,7 @@ async function act(a) {
   if (a === "pin") mutate({ id: s.id, pinned: !s.meta.pinned }, s.meta.pinned ? "已取消置顶" : "已置顶");
   if (a === "archive") mutate({ id: s.id, archived: !s.meta.archived }, s.meta.archived ? "已取消归档" : "已归档（默认列表中隐藏，可在「已归档」里找到）");
   if (a === "organize") organize([s.id]);
+  if (a === "export-images") exportSessionImages(s);
 }
 
 // ---- 事件 ----
@@ -846,8 +927,24 @@ $("list").addEventListener("click", e => {
 $("list").addEventListener("dblclick", e => { if (e.target.closest("[data-id]")) act("open"); });
 $("preview").addEventListener("click", e => {
   const g = e.target.closest("[data-goto]"); if (g) { select(g.dataset.goto); return; }
+  const c = e.target.closest("[data-copy]");
+  if (c) {
+    // A message copies its original Markdown; a code block copies what it shows.
+    const box = c.parentElement;
+    const item = box.classList.contains("msg") ? state.tx.get(state.selected)?.items[box.dataset.idx] : undefined;
+    copyText(item ? item.text : box.querySelector("pre").textContent);
+    return;
+  }
+  const shot = e.target.closest(".shot[data-url]");
+  if (shot) {
+    const v = $("imgview");
+    v.querySelector("img").src = shot.dataset.url;
+    $("imgview-save").href = shot.dataset.url; $("imgview-save").download = shot.dataset.name;
+    v.showModal(); return;
+  }
   const b = e.target.closest("[data-act]"); if (b && !b.disabled) act(b.dataset.act);
 });
+$("imgview").addEventListener("click", e => { if (e.target === e.currentTarget || e.target.closest("[data-close]")) $("imgview").close(); });
 $("preview").addEventListener("keydown", e => {
   if (e.target.id !== "rename") return;
   if (e.key === "Enter" && !e.isComposing) {
@@ -858,7 +955,7 @@ $("preview").addEventListener("keydown", e => {
 });
 $("q").addEventListener("input", e => { state.q = e.target.value; if (state.ai) { askAbort?.abort(); state.ai = null; } runSearch(); });
 document.addEventListener("keydown", e => {
-  if ($("storage").open) return;
+  if ($("storage").open || $("imgview").open) return;
   const typing = e.target.tagName === "INPUT";
   if (e.key === "/" && !typing) { e.preventDefault(); $("q").focus(); return; }
   if (e.key === "Enter" && e.shiftKey && e.target.id === "q" && !e.isComposing) { e.preventDefault(); ask(); return; }

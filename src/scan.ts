@@ -5,6 +5,8 @@ export interface Message { role: "user" | "assistant"; text: string; }
 export interface SessionRecord {
   id: string; path: string; cwd: string; name?: string; model?: string; parent?: string;
   created: string; modified: string; count: number; firstUser: string;
+  /** Images in any message on any branch (what "export images" writes). */
+  images: number;
   /** First few messages, truncated, for the preview pane. */
   messages: Message[];
   /** Lower-cased conversation text for full-text search (capped). */
@@ -34,7 +36,7 @@ export function displayLine(text: string): string {
 
 /** Parse one pi session file (JSONL). Returns undefined for files without a session header. */
 export function parseSession(path: string, raw: string, mtime: Date): SessionRecord | undefined {
-  let header: any, name: string | undefined, model: string | undefined, last: string | undefined, count = 0, firstUser = "";
+  let header: any, name: string | undefined, model: string | undefined, last: string | undefined, count = 0, images = 0, firstUser = "";
   const messages: Message[] = [], chunks: string[] = [];
   let size = 0;
   for (const line of raw.split("\n")) {
@@ -43,6 +45,7 @@ export function parseSession(path: string, raw: string, mtime: Date): SessionRec
     try { e = JSON.parse(line); } catch { continue; }
     if (!header) { if (e.type !== "session") return undefined; header = e; }
     if (typeof e.timestamp === "string") last = e.timestamp;
+    if (e.type === "message" && Array.isArray(e.message?.content)) for (const p of e.message.content) if (p?.type === "image") images++;
     if (e.type === "session_info") name = typeof e.name === "string" && e.name.trim() ? e.name.trim() : undefined;
     else if (e.type === "model_change" && typeof e.modelId === "string") model = e.modelId;
     else if (e.type === "message" && (e.message?.role === "user" || e.message?.role === "assistant")) {
@@ -61,7 +64,7 @@ export function parseSession(path: string, raw: string, mtime: Date): SessionRec
   return {
     id: header.id, path, cwd: typeof header.cwd === "string" ? header.cwd : "", name, model,
     parent: typeof header.parentSession === "string" ? header.parentSession : undefined,
-    created, modified, count, firstUser, messages,
+    created, modified, count, images, firstUser, messages,
     text: [name ?? "", ...chunks].join("\n").slice(0, TEXT_CAP).toLowerCase(),
   };
 }
