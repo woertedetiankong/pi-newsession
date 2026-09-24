@@ -184,6 +184,8 @@ section.preview { overflow-y: auto; background: var(--panel); }
 #imgview .btn { background: var(--panel); color: var(--text); text-decoration: none; }
 .thinking { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
 .thinking > summary { cursor: pointer; }
+.app.hide-thinking .thinking, .app.hide-thinking .msg.think-only { display: none; }
+.pv h3 .think-toggle { float: right; font-size: 12px; font-weight: 400; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; letter-spacing: 0; }
 .thinking .md { border-left: 2px solid var(--line-strong); padding-left: 10px; margin-top: 4px; }
 .terr-box { color: #d4453b; font-size: 12.5px; margin-top: 4px; }
 .note { margin: 10px 0 14px; font-size: 12.5px; color: var(--muted); border: 1px dashed var(--line-strong); border-radius: 8px; padding: 6px 10px; }
@@ -277,9 +279,6 @@ dialog.dlg::backdrop { background: rgba(0,0,0,.35); }
     <div class="seg" id="titleSeg" title="标题">
       <button data-v="ai">整理后标题</button><button data-v="raw">原始标题</button>
     </div>
-    <div class="seg" id="timeSeg" title="按哪个时间">
-      <button data-v="modified">最后活动</button><button data-v="created">创建时间</button>
-    </div>
   </header>
   <aside id="side"></aside>
   <main id="list"><div class="empty">正在读取会话…</div></main>
@@ -299,13 +298,14 @@ const TOKEN = window.piWeb ? window.piWeb.token : (() => {
 
 const state = {
   sessions: [], current: null, model: null, connected: true, organize: { running: false }, error: "",
-  titleMode: "ai", timeField: "modified", q: "", hits: null,
+  titleMode: "ai", q: "", hits: null,
   scope: { kind: "all" }, openProjects: new Set(), selected: null, collapsed: new Set(["frag"]),
   editing: false, tx: new Map(), pvKey: null, loaded: false, ai: null,
-  aiModel: "", models: [],
+  aiModel: "", models: [], hideThinking: false,
 };
-try { const p = JSON.parse(localStorage.getItem("pi-sessions-prefs") || "{}"); if (p.titleMode) state.titleMode = p.titleMode; if (p.timeField) state.timeField = p.timeField; if (p.aiModel) state.aiModel = p.aiModel; } catch {}
-const savePrefs = () => { try { localStorage.setItem("pi-sessions-prefs", JSON.stringify({ titleMode: state.titleMode, timeField: state.timeField, aiModel: state.aiModel })); } catch {} };
+try { const p = JSON.parse(localStorage.getItem("pi-sessions-prefs") || "{}"); if (p.titleMode) state.titleMode = p.titleMode; if (p.aiModel) state.aiModel = p.aiModel; if (p.hideThinking) state.hideThinking = true; } catch {}
+document.getElementById("app").classList.toggle("hide-thinking", state.hideThinking);
+const savePrefs = () => { try { localStorage.setItem("pi-sessions-prefs", JSON.stringify({ titleMode: state.titleMode, aiModel: state.aiModel, hideThinking: state.hideThinking })); } catch {} };
 
 // ---- API ----
 // Routes are written as /api/...; on the shared hub they live under /api/sessions/...
@@ -333,7 +333,7 @@ const L = {
     title: "pi 会话管理", brand: "会话", searchPh: "搜索内容，或 @项目 #标签 上周 8月",
     askBtn: "✨ 用 AI 找", askTip: "用右侧选择的模型（默认跟随 pi）理解你的描述，在所有会话的标题和摘要中查找。会把你的描述和会话的标题、摘要、首句发送给该模型的服务商，每次 1 次模型请求。快捷键 Shift+Enter",
     modelTip: "「用 AI 找」和「AI 整理」使用的模型（只列出 pi 中已配置登录或 API Key 的模型）",
-    titleTip: "标题", aiTitles: "整理后标题", rawTitles: "原始标题", timeTip: "按哪个时间", modified: "最后活动", created: "创建时间",
+    titleTip: "标题", aiTitles: "整理后标题", rawTitles: "原始标题", modified: "最后活动", created: "创建时间",
     loading: "正在读取会话…", saveImage: "下载图片", close: "关闭",
     offline: "连接不到 pi。pi 可能已经退出，在 pi 中运行 /sessions 重新打开。", requestFailed: n => "请求失败 " + n,
     weekdays: ["周日", "周一", "周二", "周三", "周四", "周五", "周六"],
@@ -374,11 +374,11 @@ const L = {
     shotTip: "点击放大 / 下载", image: "图片", imageFailed: "[图片读取失败]",
     copyMsgTip: "复制这条消息的原始 Markdown", copyAll: "复制全文",
     toolFailed: "失败", toolNoResult: "无结果", args: "参数", output: "输出", empty: "（空）",
-    you: "你", thinking: "💭 思考过程",
+    you: "你", thinking: "💭 思考过程", showThinking: "显示思考过程",
     loadFailed: e => `读取失败：${e}`, retry: "重试", loadingMore: "正在加载…", noMessages: "这个会话还没有消息",
     allShown: n => `共 ${n} 条 · 已显示全部`, newMessages: "有新消息，刷新",
     backToList: "← 返回列表", currentSession: "当前会话", firstLine: "原始首句：", noneParen: "（无）", manualTitle: " · 标题为手动命名", aiTitle: " · 标题由 AI 生成",
-    openInPi: "▶ 在 pi 中打开", copyCmd: "复制命令", rename: "重命名", unpin: "取消置顶", pin: "置顶", unarchive: "取消归档", archive: "归档",
+    openInPi: "▶ 在 pi 中打开", rename: "重命名", unpin: "取消置顶", pin: "置顶", unarchive: "取消归档", archive: "归档",
     exportTip: "把这个会话里的图片存成单独的文件", exportN: n => `🖼 导出图片（${n}）`, regenerate: "重新生成摘要", aiTitleBtn: "AI 生成标题",
     focusTip: "隐藏会话列表，加宽对话区（Esc 退出）", exitFocus: "⤡ 退出专注", focus: "⤢ 专注阅读",
     summary: "摘要", project: "项目", unknown: "未知", messages: "消息", forkedFrom: "分叉自",
@@ -386,7 +386,7 @@ const L = {
     pickSession: "选择一个会话查看摘要和内容",
     switchingBanner: "pi 正在切换会话，稍后会自动恢复。", tokenExpired: "页面令牌已失效：请在 pi 中运行 /sessions 重新打开。",
     organizeConfirm: (m, n) => `将用 ${m} 为 ${n} 个会话生成标题、摘要和标签。\n\n· 每个会话的开头部分会发送给该模型的服务商\n· 每个会话一次模型请求，会产生额外用量\n\n继续？`,
-    alreadyCurrent: "已经是当前会话", copiedCmd: c => "已复制：" + c, copyCmdPrompt: "复制这条命令：",
+    alreadyCurrent: "已经是当前会话",
     unpinned: "已取消置顶", pinnedDone: "已置顶", unarchived: "已取消归档", archivedDone: "已归档（默认列表中隐藏，可在「已归档」里找到）",
     organizeCancelled: "已取消剩余的整理", renamed: "已重命名，pi 的 /resume 里也会显示新标题",
   },
@@ -394,7 +394,7 @@ const L = {
     title: "pi Sessions", brand: "Sessions", searchPh: "Search, or @project #tag last-week aug",
     askBtn: "✨ Ask AI", askTip: "Uses the model chosen on the right (pi's by default) to understand your description and find sessions by title and summary. Sends your description and each session's title, summary and first line to that model's provider; one model request per search. Shortcut: Shift+Enter",
     modelTip: "Model used by Ask AI and AI organize (only models with a login or API key in pi)",
-    titleTip: "Title", aiTitles: "AI titles", rawTitles: "Raw titles", timeTip: "Sort by", modified: "Last active", created: "Created",
+    titleTip: "Title", aiTitles: "AI titles", rawTitles: "Raw titles", modified: "Last active", created: "Created",
     loading: "Loading sessions…", saveImage: "Download image", close: "Close",
     offline: "Cannot reach pi. It may have exited; run /sessions in pi to reopen this page.", requestFailed: n => "Request failed " + n,
     weekdays: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
@@ -435,11 +435,11 @@ const L = {
     shotTip: "Click to enlarge / download", image: "image", imageFailed: "[image failed to load]",
     copyMsgTip: "Copy this message's original Markdown", copyAll: "Copy all",
     toolFailed: "failed", toolNoResult: "no result", args: "Arguments", output: "Output", empty: "(empty)",
-    you: "You", thinking: "💭 Thinking",
+    you: "You", thinking: "💭 Thinking", showThinking: "Show thinking",
     loadFailed: e => `Failed to load: ${e}`, retry: "Retry", loadingMore: "Loading…", noMessages: "This session has no messages yet",
     allShown: n => `${n} messages · all shown`, newMessages: "New messages, refresh",
     backToList: "← Back to list", currentSession: "Current session", firstLine: "First line: ", noneParen: "(none)", manualTitle: " · title set by hand", aiTitle: " · title by AI",
-    openInPi: "▶ Open in pi", copyCmd: "Copy command", rename: "Rename", unpin: "Unpin", pin: "Pin", unarchive: "Unarchive", archive: "Archive",
+    openInPi: "▶ Open in pi", rename: "Rename", unpin: "Unpin", pin: "Pin", unarchive: "Unarchive", archive: "Archive",
     exportTip: "Save this session's images as separate files", exportN: n => `🖼 Export images (${n})`, regenerate: "Regenerate summary", aiTitleBtn: "AI title",
     focusTip: "Hide the list and widen the conversation (Esc to exit)", exitFocus: "⤡ Exit focus", focus: "⤢ Focus",
     summary: "Summary", project: "Project", unknown: "unknown", messages: "Messages", forkedFrom: "Forked from",
@@ -447,7 +447,7 @@ const L = {
     pickSession: "Select a session to see its summary and conversation",
     switchingBanner: "pi is switching sessions; this recovers automatically.", tokenExpired: "The page token is no longer valid; run /sessions in pi to reopen the page.",
     organizeConfirm: (m, n) => `Use ${m} to write titles, summaries and tags for ${n} sessions?\n\n· The start of each session is sent to that model's provider\n· One model request per session, which adds usage`,
-    alreadyCurrent: "This is already the current session", copiedCmd: c => "Copied: " + c, copyCmdPrompt: "Copy this command:",
+    alreadyCurrent: "This is already the current session",
     unpinned: "Unpinned", pinnedDone: "Pinned", unarchived: "Unarchived", archivedDone: "Archived (hidden from the default list; find it under Archived)",
     organizeCancelled: "Cancelled the remaining jobs", renamed: "Renamed; pi's /resume shows the new title too",
   },
@@ -459,7 +459,6 @@ function applyStatic() {
   $("ask").textContent = L.askBtn; $("ask").title = L.askTip;
   $("aiModel").title = L.modelTip; $("aiModel").options[0].textContent = L.followPi("");
   $("titleSeg").title = L.titleTip; $("titleSeg").children[0].textContent = L.aiTitles; $("titleSeg").children[1].textContent = L.rawTitles;
-  $("timeSeg").title = L.timeTip; $("timeSeg").children[0].textContent = L.modified; $("timeSeg").children[1].textContent = L.created;
   $("list").querySelector(".empty").textContent = L.loading;
   $("imgview-save").textContent = L.saveImage; document.querySelector("#imgview [data-close]").textContent = L.close;
 }
@@ -475,7 +474,7 @@ function monthKey(t) { const d = new Date(t); return `${d.getFullYear()}-${pad(d
 const norm = p => { const s = String(p || "").replace(/[\\/]+$/, ""); return /^[a-z]:[\\/]/i.test(s) ? s.replace(/\//g, "\\").toLowerCase() : s; };
 function projName(cwd) { if (!cwd) return L.unknownDir; if (state.home && norm(cwd) === norm(state.home)) return "~ (home)"; return cwd.split(/[\\/]/).filter(Boolean).pop(); }
 function tilde(p) { const h = state.home; if (h && norm(p).startsWith(norm(h)) && /^([\\/]|$)/.test(p.slice(h.length))) return "~" + p.slice(h.length); return p; }
-const T = s => new Date(s[state.timeField]).getTime();
+const T = s => new Date(s.modified).getTime();
 const rawTitle = s => s.name || s.firstUser || L.emptySession;
 const title = s => state.titleMode === "ai" ? (s.meta.title || rawTitle(s)) : rawTitle(s);
 const tags = s => s.meta.tags || [];
@@ -584,8 +583,7 @@ function groups(list) {
 
 // ---- 渲染 ----
 function renderHeader() {
-  for (const [id, key] of [["titleSeg", "titleMode"], ["timeSeg", "timeField"]])
-    for (const b of $(id).children) b.classList.toggle("on", b.dataset.v === state[key]);
+  for (const b of $("titleSeg").children) b.classList.toggle("on", b.dataset.v === state.titleMode);
   const o = state.organize, b = $("organize"), pending = state.sessions.filter(needsOrganize).length;
   b.hidden = !o.running && !pending;
   b.classList.toggle("primary", !o.running);
@@ -892,7 +890,8 @@ function itemHtml(it, idx, s) {
   const time = it.time ? ` title="${esc(fmtFull(it.time))}"` : "";
   if (it.kind === "note") return `<div class="note" data-idx="${idx}"${time}><details><summary>ℹ︎ ${esc(it.title)}</summary><div class="md">${md(it.text)}</div></details></div>`;
   if (it.kind === "user") return `<div class="msg user" data-idx="${idx}"${time}><div class="who">${esc(L.you)}</div><div class="body md">${md(it.text)}${shotsHtml(s, it.images)}</div>${it.text.trim() ? MSG_COPY_BTN : ""}</div>`;
-  return `<div class="msg assistant" data-idx="${idx}"${time}><div class="who">AI</div><div class="body">
+  const thinkOnly = it.thinking && !it.text && !it.tools.length && !it.error;
+  return `<div class="msg assistant${thinkOnly ? " think-only" : ""}" data-idx="${idx}"${time}><div class="who">AI</div><div class="body">
     ${it.thinking ? `<details class="thinking"><summary>${esc(L.thinking)}</summary><div class="md">${md(it.thinking)}</div></details>` : ""}
     ${it.text ? `<div class="md">${md(it.text)}</div>` : ""}
     ${it.tools.map(t => toolHtml(t, s)).join("")}
@@ -949,7 +948,8 @@ function openTx(s, fresh) {
     state.tx.set(txKey(s), tx);
   }
   const box = $("pv-tx"), frag = document.createElement("div");
-  frag.innerHTML = tx.items.map(itemHtml).join("");
+  frag.innerHTML = tx.items.map((it, k) => itemHtml(it, k, s)).join("");
+  loadShots(frag);
   markWords(frag, parseQuery(state.q).words);
   box.replaceChildren(...frag.childNodes);
   renderTxFoot(s);
@@ -964,7 +964,6 @@ function headHtml(s) {
     <div class="raw-title">${esc(L.firstLine)}${esc(s.firstUser || L.noneParen)}${esc(s.meta.titleSource === "manual" ? L.manualTitle : s.meta.titleSource === "ai" ? L.aiTitle : "")}</div>
     <div class="actions">
       <button class="btn primary" data-act="open" ${isCurrent(s) ? "disabled style='opacity:.5;cursor:default'" : ""}>${esc(L.openInPi)}</button>
-      <button class="btn" data-act="copy">${esc(L.copyCmd)}</button>
       <button class="btn" data-act="rename">${esc(L.rename)}</button>
       <button class="btn" data-act="pin">${esc(s.meta.pinned ? L.unpin : L.pin)}</button>
       <button class="btn" data-act="archive">${esc(s.meta.archived ? L.unarchive : L.archive)}</button>
@@ -981,7 +980,7 @@ function headHtml(s) {
       ${tags(s).length ? `<dt>${esc(L.tags)}</dt><dd>${tags(s).map(t => `<span class="tag">#${esc(t)}</span>`).join(" ")}</dd>` : ""}
       ${parent ? `<dt>${esc(L.forkedFrom)}</dt><dd><button class="tag" data-goto="${esc(parent.id)}">${esc(title(parent))}</button></dd>` : ""}
     </dl>
-    <h3>${esc(L.conversation)} <span style="font-weight:400">${esc(L.conversationSub)}</span></h3>`;
+    <h3>${esc(L.conversation)} <span style="font-weight:400">${esc(L.conversationSub)}</span><label class="think-toggle"><input type="checkbox" id="show-thinking"${state.hideThinking ? "" : " checked"}>${esc(L.showThinking)}</label></h3>`;
 }
 function renderPreview() {
   const s = state.sessions.find(x => x.id === state.selected);
@@ -1056,10 +1055,6 @@ async function act(a) {
     if (isCurrent(s)) return toast(L.alreadyCurrent);
     try { const r = await api("/api/open", { id: s.id }); toast(r.message); if (r.ok) setTimeout(refresh, 1200); } catch (e) { toast(e.message); }
   }
-  if (a === "copy") {
-    const cmd = `cd ${JSON.stringify(s.cwd)} && pi --session ${s.id}`;
-    try { await navigator.clipboard.writeText(cmd); toast(L.copiedCmd(cmd)); } catch { prompt(L.copyCmdPrompt, cmd); }
-  }
   if (a === "rename") { state.editing = true; renderPreview(); }
   if (a === "pin") mutate({ id: s.id, pinned: !s.meta.pinned }, s.meta.pinned ? L.unpinned : L.pinnedDone);
   if (a === "archive") mutate({ id: s.id, archived: !s.meta.archived }, s.meta.archived ? L.unarchived : L.archivedDone);
@@ -1068,8 +1063,7 @@ async function act(a) {
 }
 
 // ---- 事件 ----
-for (const [id, key] of [["titleSeg", "titleMode"], ["timeSeg", "timeField"]])
-  $(id).addEventListener("click", e => { const v = e.target.closest("button")?.dataset.v; if (!v) return; state[key] = v; savePrefs(); render(); });
+$("titleSeg").addEventListener("click", e => { const v = e.target.closest("button")?.dataset.v; if (!v) return; state.titleMode = v; savePrefs(); render(); });
 $("organize").addEventListener("click", async () => {
   if (state.organize.running) { try { state.organize = (await api("/api/organize/cancel", {})).organize; renderHeader(); toast(L.organizeCancelled); } catch (e) { toast(e.message); } return; }
   organize(state.sessions.filter(needsOrganize).sort((a, b) => b.modified.localeCompare(a.modified)).map(s => s.id));
@@ -1085,6 +1079,7 @@ $("side").addEventListener("click", e => {
   render();
 });
 $("ask").addEventListener("click", ask);
+document.addEventListener("change", e => { if (e.target.id !== "show-thinking") return; state.hideThinking = !e.target.checked; $("app").classList.toggle("hide-thinking", state.hideThinking); savePrefs(); });
 $("aiModel").addEventListener("change", e => { state.aiModel = e.target.value; savePrefs(); renderHeader(); });
 $("list").addEventListener("click", e => {
   const a = e.target.closest("[data-ai]"); if (a) { if (a.dataset.ai === "exit") exitAi(); else $("organize").click(); return; }

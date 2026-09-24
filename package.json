@@ -1,6 +1,6 @@
 {
   "name": "pi-sessions",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Browse, search and organize pi sessions by project and date",
   "type": "module",
   "license": "MIT",

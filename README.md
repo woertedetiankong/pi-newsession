@@ -13,7 +13,7 @@
 pi install git:github.com/woertedetiankong/pi-newsession
 
 # 或锁定到某个版本，不随仓库更新而变化
-pi install git:github.com/woertedetiankong/pi-newsession@v0.2.1
+pi install git:github.com/woertedetiankong/pi-newsession@v0.2.2
 
 # 或只装到当前项目（写入 .pi/settings.json）
 pi install git:github.com/woertedetiankong/pi-newsession -l
@@ -50,7 +50,7 @@ The page is available in Chinese and English (toggle in the header, or `?lang=en
 
 - **左栏**：全部 / 最近 7 天活跃 / 置顶；项目列表，展开后按「最近 7 天」和月份细分；标签；已归档。
 - **中栏**：置顶 → 最近 7 天按日（`09-23 周三`）→ 更早按月（`2026-08`）→ 零碎（1 条消息以内）。每条显示标题、完整日期时间、摘要、项目、消息数和标签。
-- **右栏**：摘要、项目、时间、模型、分叉来源，以及**完整对话**；可以打开、复制命令、重命名、置顶、归档。
+- **右栏**：摘要、项目、时间、模型、分叉来源，以及**完整对话**；可以打开、重命名、置顶、归档。
 
 ### 完整对话
 
@@ -58,7 +58,7 @@ The page is available in Chinese and English (toggle in the header, or `?lang=en
 
 - AI 回复按 Markdown 渲染：标题、列表、表格、代码块、链接。
 - 工具调用默认折叠为一行（如 `bash npm test`），点开查看参数和输出；失败的调用标红。单个工具输出超过 2 万字时截断。
-- 思考过程、上下文压缩、分支摘要折叠显示。
+- 思考过程、上下文压缩、分支摘要折叠显示；思考过程可在对话标题旁一键隐藏（设置会被记住）。
 - 复制：鼠标移到消息上，右上角「复制全文」复制这条消息的原始 Markdown；代码块、工具参数和输出右上角的「复制」只复制那一块。
 - 图片：你发给 AI 的图片、工具读到的图片（如截图）显示为缩略图，点击放大，可「下载图片」保存到本地。图片本来就存在 pi 的会话文件里，页面只是把它读出来，不另外复制。
 - 滚动到底部自动加载更多；从搜索进入时自动跳到第一处命中并高亮关键词。
@@ -103,7 +103,7 @@ The page is available in Chinese and English (toggle in the header, or `?lang=en
 | Windows（实验性，未经测试） | 把 pi 所在的窗口调到前台；Windows Terminal 中无法定位到具体标签页；被系统拦截时任务栏图标会闪烁 |
 | Linux | 暂不支持 |
 
-macOS 第一次使用时，系统可能询问是否允许终端「控制」自己（自动化权限），允许后才能精确定位标签页；拒绝时退回到只激活应用。不想要这个行为，启动 pi 前设置 `PI_SESSIONS_FOCUS=0`。「复制命令」复制 `cd <项目> && pi --session <id>`，可在新终端中恢复。
+macOS 第一次使用时，系统可能询问是否允许终端「控制」自己（自动化权限），允许后才能精确定位标签页；拒绝时退回到只激活应用。不想要这个行为，启动 pi 前设置 `PI_SESSIONS_FOCUS=0`。
 
 ## AI 整理
 
