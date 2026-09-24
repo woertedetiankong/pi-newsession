@@ -1022,7 +1022,9 @@ async function refresh() {
     const first = !state.loaded;
     Object.assign(state, { sessions: data.sessions, current: data.current, home: data.home || "", model: data.model, organize: data.organize, loaded: true, error: data.connected ? "" : L.switchingBanner });
     if (first) {
-      const cur = state.sessions.find(isCurrent) || state.sessions[0];
+      // Deep link from other pi-web pages (e.g. pi-learn's sources): /sessions/?id=<session id>
+      const linked = new URLSearchParams(location.search).get("id");
+      const cur = (linked && state.sessions.find(s => s.id === linked)) || state.sessions.find(isCurrent) || state.sessions[0];
       if (cur) state.openProjects.add(cur.cwd);
       state.selected = cur?.id;
     }
