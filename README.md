@@ -13,7 +13,7 @@
 pi install git:github.com/woertedetiankong/pi-newsession
 
 # 或锁定到某个版本，不随仓库更新而变化
-pi install git:github.com/woertedetiankong/pi-newsession@v0.1.1
+pi install git:github.com/woertedetiankong/pi-newsession@v0.1.2
 
 # 或只装到当前项目（写入 .pi/settings.json）
 pi install git:github.com/woertedetiankong/pi-newsession -l
@@ -36,7 +36,19 @@ pi -e git:github.com/woertedetiankong/pi-newsession
 
 - **左栏**：全部 / 最近 7 天活跃 / 置顶；项目列表，展开后按「最近 7 天」和月份细分；标签；已归档。
 - **中栏**：置顶 → 最近 7 天按日（`09-23 周三`）→ 更早按月（`2026-08`）→ 零碎（1 条消息以内）。每条显示标题、完整日期时间、摘要、项目、消息数和标签。
-- **右栏**：摘要、项目、时间、模型、分叉来源和对话开头；可以打开、复制命令、重命名、置顶、归档。
+- **右栏**：摘要、项目、时间、模型、分叉来源，以及**完整对话**；可以打开、复制命令、重命名、置顶、归档。
+
+### 完整对话
+
+右栏显示会话**当前分支**的全部消息（与在 pi 中恢复该会话时看到的一致），不截断：
+
+- AI 回复按 Markdown 渲染：标题、列表、表格、代码块、链接。
+- 工具调用默认折叠为一行（如 `bash npm test`），点开查看参数和输出；失败的调用标红。单个工具输出超过 2 万字时截断。
+- 思考过程、上下文压缩、分支摘要折叠显示。
+- 滚动到底部自动加载更多；从搜索进入时自动跳到第一处命中并高亮关键词。
+- 正在进行的会话有新消息时不会打断阅读，底部会出现「有新消息，刷新」。
+- 「⤢ 专注阅读」隐藏会话列表、加宽对话区，`Esc` 退出。
+- 网页中只能查看；要继续对话，点「在 pi 中打开」。
 
 搜索框同时支持：
 

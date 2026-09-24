@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import type { AddressInfo } from "node:net";
@@ -7,6 +7,7 @@ import { SessionScanner, searchSnippet, type SessionRecord } from "./scan.ts";
 import { MetaStore, type MetaPatch } from "./meta.ts";
 import { Organizer, organizeOne, type ModelContext } from "./organize.ts";
 import { askSessions } from "./ask.ts";
+import { buildTranscript, firstMatch, type TranscriptItem } from "./transcript.ts";
 
 /** What the server needs from the live pi runtime; replaced on every session_start. */
 export interface Binding {
@@ -29,6 +30,8 @@ export class SessionsServer {
   private server?: Server;
   private port = 0;
   private records: SessionRecord[] = [];
+  /** Recently opened transcripts, keyed by path; re-parsed when the file changes. */
+  private transcripts = new Map<string, { version: string; items: TranscriptItem[] }>();
 
   constructor(private opts: ServerOptions) {
     this.meta = new MetaStore(opts.metaFile);
@@ -64,6 +67,15 @@ export class SessionsServer {
     const hit = this.records.find(r => r.id === id) ?? (await this.refresh()).find(r => r.id === id);
     if (!hit) throw new HttpError(404, "找不到这个会话，可能已被删除");
     return hit;
+  }
+
+  private async transcript(path: string): Promise<TranscriptItem[]> {
+    const s = await stat(path), version = `${s.mtimeMs}:${s.size}`, hit = this.transcripts.get(path);
+    if (hit?.version === version) return hit.items;
+    const items = buildTranscript(await readFile(path, "utf8"));
+    this.transcripts.delete(path); this.transcripts.set(path, { version, items });
+    while (this.transcripts.size > 5) this.transcripts.delete(this.transcripts.keys().next().value!);
+    return items;
   }
 
   private async organize(id: string, signal: AbortSignal): Promise<void> {
@@ -125,9 +137,13 @@ export class SessionsServer {
         })),
       };
     }
-    if (method === "GET" && p === "/api/session") {
+    if (method === "GET" && p === "/api/transcript") {
       const r = await this.find(url.searchParams.get("id"));
-      return { id: r.id, messages: r.messages };
+      const items = await this.transcript(r.path).catch(() => { throw new HttpError(404, "读取会话文件失败，可能已被删除"); });
+      const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
+      const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit")) || 40));
+      const words = (url.searchParams.get("q") ?? "").toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
+      return { id: r.id, total: items.length, offset, items: items.slice(offset, offset + limit), firstMatch: offset === 0 ? firstMatch(items, words) : undefined };
     }
     if (method === "GET" && p === "/api/search") {
       const words = (url.searchParams.get("q") ?? "").toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);

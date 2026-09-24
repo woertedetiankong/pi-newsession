@@ -1,0 +1,104 @@
+import { readFile } from "node:fs/promises";
+
+export interface ToolItem { id: string; name: string; summary: string; args: string; output?: string; isError?: boolean; }
+export type TranscriptItem =
+  | { kind: "user"; text: string; images: number; time?: string }
+  | { kind: "assistant"; text: string; thinking?: string; tools: ToolItem[]; error?: string; model?: string; time?: string }
+  | { kind: "note"; title: string; text: string; time?: string };
+
+const TEXT_MAX = 200_000, ARGS_MAX = 4_000, OUTPUT_MAX = 20_000;
+const cut = (s: string, n: number) => s.length > n ? s.slice(0, n) + `\n…（已截断，共 ${s.length.toLocaleString()} 字）` : s;
+
+function parts(content: unknown): { text: string; images: number; thinking: string; calls: any[] } {
+  if (typeof content === "string") return { text: content, images: 0, thinking: "", calls: [] };
+  const out = { text: "", images: 0, thinking: "", calls: [] as any[] };
+  const texts: string[] = [], thoughts: string[] = [];
+  for (const p of Array.isArray(content) ? content : []) {
+    if (p?.type === "text" && typeof p.text === "string") texts.push(p.text);
+    else if (p?.type === "image") out.images++;
+    else if (p?.type === "thinking" && typeof p.thinking === "string" && p.thinking.trim()) thoughts.push(p.thinking);
+    else if (p?.type === "toolCall") out.calls.push(p);
+  }
+  out.text = texts.join("\n\n"); out.thinking = thoughts.join("\n\n");
+  return out;
+}
+
+/** One line that says what a tool call did, e.g. the bash command or the file path. */
+export function toolSummary(name: string, args: unknown): string {
+  const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  const pick = ["command", "path", "file_path", "filePath", "pattern", "query", "url"].map(k => a[k]).find(v => typeof v === "string") as string | undefined;
+  const first = pick ?? Object.values(a).find(v => typeof v === "string") as string | undefined;
+  return (first ?? "").replace(/\s+/g, " ").trim().slice(0, 160) || name;
+}
+function stringify(args: unknown): string {
+  if (args == null) return "";
+  if (typeof args === "string") return args;
+  try { return JSON.stringify(args, null, 2); } catch { return String(args); }
+}
+
+/** The entries on the active branch: from the last entry in the file back to the root, like pi does on resume. */
+export function activeBranch(raw: string): any[] {
+  const byId = new Map<string, any>();
+  let leaf: string | undefined;
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    let e: any;
+    try { e = JSON.parse(line); } catch { continue; }
+    if (e.type === "session" || typeof e.id !== "string") continue;
+    byId.set(e.id, e); leaf = e.id;
+  }
+  const path: any[] = [], seen = new Set<string>();
+  for (let id = leaf; id && byId.has(id) && !seen.has(id); id = byId.get(id).parentId ?? undefined) {
+    seen.add(id); path.push(byId.get(id));
+  }
+  return path.reverse();
+}
+
+export function buildTranscript(raw: string): TranscriptItem[] {
+  const items: TranscriptItem[] = [], calls = new Map<string, ToolItem>();
+  for (const e of activeBranch(raw)) {
+    const time = typeof e.timestamp === "string" ? e.timestamp : undefined;
+    if (e.type === "compaction") { items.push({ kind: "note", title: "上下文已压缩", text: cut(String(e.summary ?? ""), TEXT_MAX), time }); continue; }
+    if (e.type === "branch_summary") { items.push({ kind: "note", title: "从其他分支返回", text: cut(String(e.summary ?? ""), TEXT_MAX), time }); continue; }
+    if (e.type === "custom_message" && e.display) { items.push({ kind: "note", title: String(e.customType ?? "插件消息"), text: cut(parts(e.content).text, TEXT_MAX), time }); continue; }
+    if (e.type !== "message" || !e.message) continue;
+    const m = e.message;
+    if (m.role === "user") {
+      const p = parts(m.content);
+      if (p.text.trim() || p.images) items.push({ kind: "user", text: cut(p.text, TEXT_MAX), images: p.images, time });
+    } else if (m.role === "assistant") {
+      const p = parts(m.content);
+      const tools = p.calls.map(c => {
+        const t: ToolItem = { id: String(c.id ?? ""), name: String(c.name ?? "tool"), summary: toolSummary(String(c.name ?? ""), c.arguments), args: cut(stringify(c.arguments), ARGS_MAX) };
+        if (t.id) calls.set(t.id, t);
+        return t;
+      });
+      const error = m.stopReason === "error" ? String(m.errorMessage ?? "请求出错") : m.stopReason === "aborted" ? "已中断" : undefined;
+      if (p.text.trim() || tools.length || error || p.thinking) items.push({ kind: "assistant", text: cut(p.text, TEXT_MAX), thinking: p.thinking ? cut(p.thinking, TEXT_MAX) : undefined, tools, error, model: m.model, time });
+    } else if (m.role === "toolResult") {
+      const t = calls.get(String(m.toolCallId ?? ""));
+      const p = parts(m.content), output = cut(p.text + (p.images ? `\n[${p.images} 张图片]` : ""), OUTPUT_MAX);
+      if (t) { t.output = output; t.isError = !!m.isError; }
+    } else if (m.role === "bashExecution") {
+      const tool: ToolItem = { id: "", name: "bash", summary: `! ${String(m.command ?? "")}`.slice(0, 160), args: String(m.command ?? ""), output: cut(String(m.output ?? ""), OUTPUT_MAX), isError: typeof m.exitCode === "number" && m.exitCode !== 0 };
+      items.push({ kind: "assistant", text: "", tools: [tool], time });
+    } else if (m.role === "custom" && m.display) {
+      items.push({ kind: "note", title: String(m.customType ?? "插件消息"), text: cut(parts(m.content).text, TEXT_MAX), time });
+    } else if (m.role === "branchSummary" || m.role === "compactionSummary") {
+      items.push({ kind: "note", title: m.role === "branchSummary" ? "从其他分支返回" : "上下文已压缩", text: cut(String(m.summary ?? ""), TEXT_MAX), time });
+    }
+  }
+  return items;
+}
+
+/** Index of the first item mentioning every word (case-insensitive), or -1. */
+export function firstMatch(items: TranscriptItem[], words: string[]): number {
+  if (!words.length) return -1;
+  const textOf = (i: TranscriptItem) => (i.kind === "note" ? i.title + "\n" + i.text : i.kind === "assistant" ? [i.text, ...i.tools.map(t => t.summary)].join("\n") : i.text).toLowerCase();
+  const all = words.every(w => items.some(i => textOf(i).includes(w)));
+  if (!all) return -1;
+  const idx = items.findIndex(i => { const t = textOf(i); return words.some(w => t.includes(w)); });
+  return idx;
+}
+
+export async function readTranscript(path: string): Promise<TranscriptItem[]> { return buildTranscript(await readFile(path, "utf8")); }

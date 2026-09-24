@@ -11,6 +11,7 @@ import { Organizer, parseOrganized, organizeOne } from "../src/organize.ts";
 import { appendSessionName } from "../src/rename.ts";
 import { SessionsServer, type Binding } from "../src/server.ts";
 import { askSessions, candidateLines, parseAsk } from "../src/ask.ts";
+import { activeBranch, buildTranscript, firstMatch, toolSummary } from "../src/transcript.ts";
 
 async function temp(t: any): Promise<string> { const dir = await mkdtemp(join(tmpdir(), "pi-sessions-test-")); t.after(() => rm(dir, { recursive: true, force: true })); return dir; }
 export function sessionFile(id: string, cwd: string, messages: [string, string][], extra: object[] = []): string {
@@ -153,8 +154,11 @@ test("server serves the page, guards the API and routes actions to the binding",
   assert.equal(changed.status, 200, "a changed session invalidates the etag");
   assert.notEqual(changed.headers.get("etag"), etag);
   assert.deepEqual((await (await call("/api/search?q=缓存")).json()).hits.map((h: any) => h.id), ["a"]);
-  assert.equal((await (await call("/api/session?id=a")).json()).messages.length, 3, "includes the message appended above");
-  assert.equal((await call("/api/session?id=zzz")).status, 404);
+  const tx = await (await call("/api/transcript?id=a&limit=2&q=缓存")).json();
+  assert.equal(tx.total, 3, "includes the message appended above"); assert.equal(tx.items.length, 2); assert.equal(tx.firstMatch, 0);
+  const page2 = await (await call("/api/transcript?id=a&offset=2&limit=2")).json();
+  assert.deepEqual(page2.items.map((i: any) => i.text), ["新消息"]); assert.equal(page2.firstMatch, undefined);
+  assert.equal((await call("/api/transcript?id=zzz")).status, 404);
 
   const meta = await (await call("/api/meta", { id: "a", title: "缓存方案", pinned: true })).json();
   assert.deepEqual(meta.meta, { title: "缓存方案", titleSource: "manual", pinned: true });
@@ -281,4 +285,42 @@ test("page path helpers handle macOS, Linux and Windows home dirs", async () => 
   assert.equal(win.projName("c:\\users\\alex\\"), "~ (home)"); assert.equal(win.projName("C:\\Users\\Alex\\code\\blog"), "blog");
   assert.equal(win.tilde("C:\\Users\\Alex\\code"), "~\\code");
   assert.equal(make("").projName("/home/bob"), "bob");
+});
+
+const jsonl = (entries: object[]) => [{ type: "session", version: 3, id: "s", timestamp: "2026-09-01T00:00:00.000Z", cwd: "/w" }, ...entries].map(e => JSON.stringify(e)).join("\n") + "\n";
+const msg = (id: string, parentId: string | null, message: object) => ({ type: "message", id, parentId, timestamp: "2026-09-01T00:00:00.000Z", message });
+
+test("transcript follows the active branch (last entry back to root)", () => {
+  const raw = jsonl([
+    msg("u1", null, { role: "user", content: "问题" }),
+    msg("a1", "u1", { role: "assistant", content: [{ type: "text", text: "旧回答" }] }),
+    msg("a2", "u1", { role: "assistant", content: [{ type: "text", text: "新回答" }] }),
+    { type: "session_info", id: "n", parentId: "a2", timestamp: "t", name: "x" },
+  ]);
+  assert.deepEqual(activeBranch(raw).map(e => e.id), ["u1", "a2", "n"]);
+  assert.deepEqual(buildTranscript(raw).map((i: any) => i.text), ["问题", "新回答"]);
+});
+
+test("transcript attaches tool results, keeps thinking, notes and bash, and truncates huge output", () => {
+  const raw = jsonl([
+    msg("u", null, { role: "user", content: [{ type: "text", text: "跑测试" }, { type: "image", data: "x", mimeType: "image/png" }] }),
+    msg("a", "u", { role: "assistant", content: [{ type: "thinking", thinking: "先跑一下" }, { type: "text", text: "我来运行" }, { type: "toolCall", id: "c1", name: "bash", arguments: { command: "npm   test" } }, { type: "toolCall", id: "c2", name: "read", arguments: { path: "/a.ts" } }] }),
+    msg("r1", "a", { role: "toolResult", toolCallId: "c1", toolName: "bash", content: [{ type: "text", text: "x".repeat(30_000) }], isError: true }),
+    msg("r2", "r1", { role: "toolResult", toolCallId: "c2", toolName: "read", content: [{ type: "text", text: "file" }], isError: false }),
+    { type: "compaction", id: "c", parentId: "r2", timestamp: "t", summary: "之前讨论了测试", tokensBefore: 1 },
+    msg("b", "c", { role: "bashExecution", command: "ls", output: "a b", exitCode: 1, cancelled: false, truncated: false }),
+    msg("e", "b", { role: "assistant", content: [], stopReason: "error", errorMessage: "rate limited" }),
+  ]);
+  const items: any[] = buildTranscript(raw);
+  assert.deepEqual(items.map(i => i.kind), ["user", "assistant", "note", "assistant", "assistant"]);
+  assert.equal(items[0].images, 1);
+  assert.equal(items[1].thinking, "先跑一下");
+  assert.deepEqual(items[1].tools.map((t: any) => [t.name, t.summary, t.isError]), [["bash", "npm test", true], ["read", "/a.ts", false]]);
+  assert.ok(items[1].tools[0].output.length < 21_000 && items[1].tools[0].output.includes("已截断"));
+  assert.equal(items[2].title, "上下文已压缩");
+  assert.deepEqual([items[3].tools[0].summary, items[3].tools[0].isError], ["! ls", true]);
+  assert.equal(items[4].error, "rate limited");
+  assert.equal(firstMatch(items, ["npm"]), 1); assert.equal(firstMatch(items, ["npm", "不存在"]), -1); assert.equal(firstMatch(items, []), -1);
+  assert.equal(toolSummary("custom", { foo: 1, bar: "line one\nline two" }), "line one line two");
+  assert.equal(toolSummary("noop", {}), "noop");
 });

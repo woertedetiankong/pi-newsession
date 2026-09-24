@@ -115,7 +115,7 @@ section.preview { overflow-y: auto; background: var(--panel); }
 .msg { margin-bottom: 12px; display: flex; gap: 10px; }
 .msg .who { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; background: var(--user); color: var(--muted); }
 .msg.assistant .who { background: var(--accent-soft); color: var(--accent-text); }
-.msg .body { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; }
+.msg .body { flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; font-size: 13.5px; }
 .msg.user .body { background: var(--user); border-radius: 8px; padding: 6px 10px; }
 .more { color: var(--faint); font-size: 12.5px; text-align: center; padding: 6px; border-top: 1px dashed var(--line); margin-top: 8px; }
 
@@ -124,6 +124,51 @@ section.preview { overflow-y: auto; background: var(--panel); }
 .ai-status button { color: var(--accent-text); text-decoration: underline; }
 .spin { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--accent-soft); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -1px; margin-right: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* 完整对话 */
+.md { white-space: normal; }
+.md p { margin: 0 0 8px; }
+.md p:last-child { margin-bottom: 0; }
+.md ul, .md ol { margin: 4px 0 8px; padding-left: 22px; }
+.md li { margin: 2px 0; }
+.md code { font: 12.5px var(--mono); background: var(--user); border-radius: 4px; padding: 1px 4px; }
+.md pre, .tool pre { font: 12px/1.5 var(--mono); background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; overflow-x: auto; white-space: pre; margin: 6px 0; max-height: 420px; overflow-y: auto; }
+.md pre code { background: none; padding: 0; }
+.md blockquote { margin: 6px 0; padding-left: 10px; border-left: 3px solid var(--line-strong); color: var(--muted); }
+.md a { color: var(--accent-text); }
+.md-h { font-weight: 650; margin: 10px 0 4px; }
+.md-h1 { font-size: 16px; } .md-h2 { font-size: 15px; } .md-h3 { font-size: 14px; }
+.md-table { overflow-x: auto; margin: 6px 0; }
+.md table { border-collapse: collapse; font-size: 12.5px; }
+.md th, .md td { border: 1px solid var(--line-strong); padding: 4px 8px; text-align: left; vertical-align: top; }
+.md th { background: var(--bg); }
+.msg.user .body { white-space: normal; }
+.tool { border: 1px solid var(--line); border-radius: 7px; margin: 6px 0; background: var(--panel); }
+.tool > summary { cursor: pointer; padding: 5px 10px; font-size: 12.5px; display: flex; gap: 8px; align-items: center; list-style: none; }
+.tool > summary::-webkit-details-marker { display: none; }
+.tool > summary::before { content: "▸"; color: var(--faint); transition: transform .15s; }
+.tool[open] > summary::before { transform: rotate(90deg); }
+.tool .tname { font: 600 12px var(--mono); color: var(--accent-text); flex: none; }
+.tool .tsum { font: 12px var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.tool .terr { color: #d4453b; font-size: 11.5px; flex: none; }
+.tool.err { border-color: color-mix(in srgb, #d4453b 40%, var(--line)); }
+.tool[open] { padding-bottom: 6px; }
+.tool .tlabel, .tool pre { margin-left: 10px; margin-right: 10px; }
+.tlabel { font-size: 11px; color: var(--faint); margin-top: 4px; }
+.thinking { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+.thinking > summary { cursor: pointer; }
+.thinking .md { border-left: 2px solid var(--line-strong); padding-left: 10px; margin-top: 4px; }
+.terr-box { color: #d4453b; font-size: 12.5px; margin-top: 4px; }
+.note { margin: 10px 0 14px; font-size: 12.5px; color: var(--muted); border: 1px dashed var(--line-strong); border-radius: 8px; padding: 6px 10px; }
+.note summary { cursor: pointer; }
+.note .md { margin-top: 6px; color: var(--text); }
+.msg { scroll-margin: 80px; }
+.msg.flash .body { animation: flash 2s ease; }
+@keyframes flash { 0%, 40% { box-shadow: 0 0 0 3px var(--accent-soft); } 100% { box-shadow: none; } }
+.app.reading { grid-template-columns: 232px minmax(0, 1fr); }
+.app.reading main { display: none; }
+.app.reading .pv { max-width: 920px; margin: 0 auto; }
+@media (max-width: 1080px) { .focus-btn { display: none; } }
+
 .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); background: var(--text); color: var(--bg); padding: 9px 16px; border-radius: 8px; font-size: 13px; opacity: 0; transition: .2s; pointer-events: none; max-width: calc(100vw - 32px); }
 .toast.show { opacity: 1; transform: translateX(-50%); }
 .banner { font-size: 12px; color: var(--muted); background: var(--accent-soft); padding: 6px 20px; }
@@ -186,7 +231,7 @@ const state = {
   sessions: [], current: null, model: null, connected: true, organize: { running: false }, error: "",
   titleMode: "ai", timeField: "modified", q: "", hits: null,
   scope: { kind: "all" }, openProjects: new Set(), selected: null, collapsed: new Set(["零碎"]),
-  editing: false, details: new Map(), loaded: false, ai: null,
+  editing: false, tx: new Map(), pvKey: null, loaded: false, ai: null,
 };
 try { const p = JSON.parse(localStorage.getItem("pi-sessions-prefs") || "{}"); if (p.titleMode) state.titleMode = p.titleMode; if (p.timeField) state.timeField = p.timeField; } catch {}
 const savePrefs = () => { try { localStorage.setItem("pi-sessions-prefs", JSON.stringify({ titleMode: state.titleMode, timeField: state.timeField })); } catch {} };
@@ -426,23 +471,141 @@ function renderList() {
   }
   $("list").innerHTML = h;
 }
-async function loadDetail(s) {
-  const key = s.id + "@" + s.modified;
-  if (state.details.has(key)) return;
-  state.details.set(key, null);
-  try { state.details.set(key, (await api("/api/session?id=" + encodeURIComponent(s.id))).messages); }
-  catch (e) { state.details.set(key, [{ role: "assistant", text: "读取失败：" + e.message }]); }
-  if (state.selected === s.id) renderPreview();
+// ---- Markdown：先整体转义，再做有限的格式转换，对话内容无法注入 HTML ----
+function inlineMd(s) {
+  return esc(s).split(/(`[^`\n]+`)/).map(seg => seg.length > 1 && seg.startsWith("`") && seg.endsWith("`") ? `<code>${seg.slice(1, -1)}</code>` :
+    seg.replace(/\*\*([^*\n]+?)\*\*/g, "<strong>$1</strong>")
+       .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')).join("");
 }
-function renderPreview() {
-  const s = state.sessions.find(x => x.id === state.selected);
-  if (!s) { $("preview").innerHTML = state.loaded ? `<div class="empty">选择一个会话查看摘要和内容</div>` : ""; $("app").classList.remove("detail"); return; }
-  const pq = parseQuery(state.q), msgs = state.details.get(s.id + "@" + s.modified);
-  if (msgs === undefined) void loadDetail(s);
-  const shown = (msgs || []).slice(0, 6), parent = s.parent && state.sessions.find(x => x.path === s.parent);
-  const organizing = state.organize.running;
-  $("preview").innerHTML = `<div class="pv">
-    <button class="btn back" data-act="back" style="margin-bottom:12px">← 返回列表</button>
+function md(src) {
+  const lines = String(src).replace(/\r\n?/g, "\n").split("\n"), out = [];
+  const listRe = /^\s*([-*+]|\d+[.)])\s+/, special = l => /^\s*(```|~~~)/.test(l) || /^#{1,6}\s/.test(l) || listRe.test(l) || /^\s*>/.test(l) || /^\s*\|.*\|\s*$/.test(l);
+  for (let i = 0; i < lines.length;) {
+    const l = lines[i];
+    const fence = l.match(/^\s*(```|~~~)/);
+    if (fence) {
+      const buf = []; i++;
+      while (i < lines.length && !lines[i].trim().startsWith(fence[1])) buf.push(lines[i++]);
+      i++; out.push(`<pre><code>${esc(buf.join("\n"))}</code></pre>`); continue;
+    }
+    const h = l.match(/^(#{1,6})\s+(.*)/);
+    if (h) { out.push(`<div class="md-h md-h${Math.min(h[1].length, 3)}">${inlineMd(h[2])}</div>`); i++; continue; }
+    if (listRe.test(l)) {
+      const ordered = /^\s*\d/.test(l), buf = [];
+      while (i < lines.length && listRe.test(lines[i])) buf.push(lines[i++].replace(listRe, ""));
+      out.push(`<${ordered ? "ol" : "ul"}>${buf.map(x => `<li>${inlineMd(x)}</li>`).join("")}</${ordered ? "ol" : "ul"}>`); continue;
+    }
+    if (/^\s*>/.test(l)) {
+      const buf = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) buf.push(lines[i++].replace(/^\s*>\s?/, ""));
+      out.push(`<blockquote>${md(buf.join("\n"))}</blockquote>`); continue;
+    }
+    if (/^\s*\|.*\|\s*$/.test(l)) {
+      const rows = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(lines[i++]);
+      const cells = r => r.trim().slice(1, -1).split("|").map(c => c.trim());
+      const body = rows.filter(r => !/^\s*\|[\s:|-]+\|\s*$/.test(r));
+      out.push(`<div class="md-table"><table>${body.map((r, k) => `<tr>${cells(r).map(c => k === 0 && rows.length > 1 && /^\s*\|[\s:|-]+\|\s*$/.test(rows[1]) ? `<th>${inlineMd(c)}</th>` : `<td>${inlineMd(c)}</td>`).join("")}</tr>`).join("")}</table></div>`); continue;
+    }
+    if (!l.trim()) { i++; continue; }
+    const buf = [];
+    while (i < lines.length && lines[i].trim() && !special(lines[i])) buf.push(lines[i++]);
+    if (!buf.length) buf.push(lines[i++]);
+    out.push(`<p>${buf.map(inlineMd).join("<br>")}</p>`);
+  }
+  return out.join("");
+}
+/** Highlights search words in text nodes only, so markup is never touched. */
+function markWords(root, words) {
+  if (!words.length) return;
+  const re = new RegExp("(" + words.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")", "gi");
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT), nodes = [];
+  while (walker.nextNode()) if (re.test(walker.currentNode.nodeValue)) nodes.push(walker.currentNode);
+  for (const n of nodes) {
+    const span = document.createElement("span");
+    span.innerHTML = esc(n.nodeValue).replace(re, "<mark>$1</mark>");
+    n.replaceWith(...span.childNodes);
+  }
+}
+
+// ---- 完整对话：分页加载当前分支 ----
+const PAGE = 40;
+const txKey = s => s.id;
+function toolHtml(t) {
+  return `<details class="tool${t.isError ? " err" : ""}"><summary><span class="tname">${esc(t.name)}</span><span class="tsum">${esc(t.summary)}</span>${t.isError ? `<span class="terr">失败</span>` : t.output === undefined ? `<span class="terr" style="color:var(--faint)">无结果</span>` : ""}</summary>
+    ${t.args ? `<div class="tlabel">参数</div><pre>${esc(t.args)}</pre>` : ""}${t.output !== undefined ? `<div class="tlabel">输出</div><pre>${esc(t.output || "（空）")}</pre>` : ""}</details>`;
+}
+function itemHtml(it, idx) {
+  const time = it.time ? ` title="${esc(fmtFull(it.time))}"` : "";
+  if (it.kind === "note") return `<div class="note" data-idx="${idx}"${time}><details><summary>ℹ︎ ${esc(it.title)}</summary><div class="md">${md(it.text)}</div></details></div>`;
+  if (it.kind === "user") return `<div class="msg user" data-idx="${idx}"${time}><div class="who">你</div><div class="body md">${md(it.text)}${it.images ? `<p class="hint">[${it.images} 张图片]</p>` : ""}</div></div>`;
+  return `<div class="msg assistant" data-idx="${idx}"${time}><div class="who">AI</div><div class="body">
+    ${it.thinking ? `<details class="thinking"><summary>💭 思考过程</summary><div class="md">${md(it.thinking)}</div></details>` : ""}
+    ${it.text ? `<div class="md">${md(it.text)}</div>` : ""}
+    ${it.tools.map(toolHtml).join("")}
+    ${it.error ? `<div class="terr-box">⚠︎ ${esc(it.error)}</div>` : ""}</div></div>`;
+}
+let txObserver;
+async function loadTx(s, until) {
+  const tx = state.tx.get(txKey(s));
+  if (!tx || tx.loading || tx.done) return;
+  tx.loading = true;
+  const words = parseQuery(state.q).words;
+  try {
+    const r = await api(`/api/transcript?id=${encodeURIComponent(s.id)}&offset=${tx.items.length}&limit=${Math.max(PAGE, (until ?? 0) - tx.items.length + 10)}${words.length ? "&q=" + encodeURIComponent(words.join(" ")) : ""}`);
+    if (state.tx.get(txKey(s)) !== tx) return;
+    const start = tx.items.length;
+    tx.items.push(...r.items); tx.total = r.total; tx.done = tx.items.length >= r.total;
+    if (r.firstMatch !== undefined) tx.firstMatch = r.firstMatch;
+    tx.loading = false;
+    if (state.selected !== s.id) return;
+    const box = $("pv-tx"); if (!box) return;
+    const frag = document.createElement("div");
+    frag.innerHTML = r.items.map((it, k) => itemHtml(it, start + k)).join("");
+    markWords(frag, words);
+    box.append(...frag.childNodes);
+    renderTxFoot(s);
+    if (tx.firstMatch >= 0 && !tx.jumped) {
+      if (tx.firstMatch >= tx.items.length) return loadTx(s, tx.firstMatch);
+      tx.jumped = true;
+      const el = box.querySelector(`[data-idx="${tx.firstMatch}"]`);
+      if (el) { el.scrollIntoView({ block: "center" }); el.classList.add("flash"); }
+    }
+  } catch (e) {
+    tx.loading = false; tx.error = e.message;
+    if (state.selected === s.id) renderTxFoot(s);
+  }
+}
+function renderTxFoot(s) {
+  const tx = state.tx.get(txKey(s)), foot = $("pv-foot"); if (!foot || !tx) return;
+  foot.innerHTML = tx.error ? `<div class="more">读取失败：${esc(tx.error)} <button class="tag" data-act="reload-tx">重试</button></div>` :
+    !tx.done ? `<div class="more" id="pv-sentinel"><span class="spin"></span>正在加载… ${tx.items.length}/${tx.total ?? "?"}</div>` :
+    !tx.items.length ? `<div class="hint">这个会话还没有消息</div>` :
+    `<div class="more">共 ${tx.items.length} 条 · 已显示全部${tx.stale ? ` · <button class="tag" data-act="reload-tx">有新消息，刷新</button>` : ""}</div>`;
+  txObserver?.disconnect();
+  const sentinel = $("pv-sentinel");
+  if (sentinel) { txObserver = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) loadTx(s); }, { root: $("preview"), rootMargin: "600px" }); txObserver.observe(sentinel); }
+}
+function openTx(s, fresh) {
+  const q = parseQuery(state.q).words.join(" ");
+  let tx = state.tx.get(txKey(s));
+  // Reload when the session changed since it was read, or when a new search needs its first match located.
+  if (fresh || !tx || tx.modified !== s.modified || tx.q !== q) {
+    tx = { items: [], modified: s.modified, q, done: false, loading: false, firstMatch: -1 };
+    state.tx.set(txKey(s), tx);
+  }
+  const box = $("pv-tx"), frag = document.createElement("div");
+  frag.innerHTML = tx.items.map(itemHtml).join("");
+  markWords(frag, parseQuery(state.q).words);
+  box.replaceChildren(...frag.childNodes);
+  renderTxFoot(s);
+  if (!tx.items.length && !tx.done) loadTx(s);
+}
+
+function headHtml(s) {
+  const pq = parseQuery(state.q), parent = s.parent && state.sessions.find(x => x.path === s.parent);
+  const organizing = state.organize.running, reading = $("app").classList.contains("reading");
+  return `<button class="btn back" data-act="back" style="margin-bottom:12px">← 返回列表</button>
     <h1>${state.editing ? `<input id="rename" value="${esc(title(s))}" maxlength="80">` : highlight(title(s), pq.words)}${isCurrent(s) ? ` <span class="chip" style="font-size:12px">当前会话</span>` : ""}</h1>
     <div class="raw-title">原始首句：${esc(s.firstUser || "（无）")}${s.meta.titleSource === "manual" ? " · 标题为手动命名" : s.meta.titleSource === "ai" ? " · 标题由 AI 生成" : ""}</div>
     <div class="actions">
@@ -452,6 +615,7 @@ function renderPreview() {
       <button class="btn" data-act="pin">${s.meta.pinned ? "取消置顶" : "置顶"}</button>
       <button class="btn" data-act="archive">${s.meta.archived ? "取消归档" : "归档"}</button>
       <button class="btn" data-act="organize" ${organizing ? "disabled style='opacity:.5'" : ""}>✨ ${s.meta.organizedAt ? "重新生成摘要" : "AI 生成标题"}</button>
+      <button class="btn focus-btn" data-act="reading" title="隐藏会话列表，加宽对话区（Esc 退出）">${reading ? "⤡ 退出专注" : "⤢ 专注阅读"}</button>
     </div>
     ${s.meta.summary ? `<div class="summary-box"><div class="lbl">摘要</div>${highlight(s.meta.summary, pq.words)}</div>` : ""}
     <dl class="facts">
@@ -462,11 +626,24 @@ function renderPreview() {
       ${tags(s).length ? `<dt>标签</dt><dd>${tags(s).map(t => `<span class="tag">#${esc(t)}</span>`).join(" ")}</dd>` : ""}
       ${parent ? `<dt>分叉自</dt><dd><button class="tag" data-goto="${esc(parent.id)}">${esc(title(parent))}</button></dd>` : ""}
     </dl>
-    <h3>对话开头</h3>
-    ${msgs === undefined || msgs === null ? `<div class="hint">读取中…</div>` : !shown.length ? `<div class="hint">这个会话还没有文字消息</div>` :
-      shown.map(m => `<div class="msg ${m.role}"><div class="who">${m.role === "user" ? "你" : "AI"}</div><div class="body">${bold(highlight(m.text.length > 600 ? m.text.slice(0, 600) + "…" : m.text, pq.words))}</div></div>`).join("")}
-    ${s.count > shown.length && shown.length ? `<div class="more">共 ${s.count} 条消息，在 pi 中打开查看全部</div>` : ""}
-  </div>`;
+    <h3>完整对话 <span style="font-weight:400">· 当前分支 · 工具调用可点开查看</span></h3>`;
+}
+function renderPreview() {
+  const s = state.sessions.find(x => x.id === state.selected);
+  if (!s) { state.pvKey = null; $("preview").innerHTML = state.loaded ? `<div class="empty">选择一个会话查看摘要和内容</div>` : ""; $("app").classList.remove("detail"); return; }
+  const key = s.id + "|" + state.q;
+  if (state.pvKey !== key) {
+    // Different session or search: rebuild everything.
+    state.pvKey = key;
+    $("preview").innerHTML = `<div class="pv"><div id="pv-head">${headHtml(s)}</div><div id="pv-tx"></div><div id="pv-foot"></div></div>`;
+    $("preview").scrollTop = 0;
+    openTx(s);
+  } else {
+    // Same session: refresh the header only, keeping scroll position and opened tool calls.
+    $("pv-head").innerHTML = headHtml(s);
+    const tx = state.tx.get(txKey(s));
+    if (tx && tx.modified !== s.modified && !tx.stale) { tx.stale = true; if (tx.done) renderTxFoot(s); }
+  }
   if (state.editing) { const i = $("rename"); i.focus(); i.select(); }
 }
 function render() { renderHeader(); renderSide(); renderList(); renderPreview(); }
@@ -516,6 +693,8 @@ async function organize(ids) {
 async function act(a) {
   const s = state.sessions.find(x => x.id === state.selected);
   if (a === "back") { $("app").classList.remove("detail"); return; }
+  if (a === "reading") { $("app").classList.toggle("reading"); $("pv-head") && s && ($("pv-head").innerHTML = headHtml(s)); return; }
+  if (a === "reload-tx" && s) { openTx(s, true); return; }
   if (!s) return;
   if (a === "open") {
     if (isCurrent(s)) return toast("已经是当前会话");
@@ -571,11 +750,12 @@ document.addEventListener("keydown", e => {
   const typing = e.target.tagName === "INPUT";
   if (e.key === "/" && !typing) { e.preventDefault(); $("q").focus(); return; }
   if (e.key === "Enter" && e.shiftKey && e.target.id === "q" && !e.isComposing) { e.preventDefault(); ask(); return; }
+  if (e.key === "Escape" && $("app").classList.contains("reading") && e.target.tagName !== "INPUT") { act("reading"); return; }
   if (e.key === "Escape" && state.ai) { exitAi(); return; }
   if (e.key === "Escape" && e.target.id === "q") { if (state.q) { state.q = ""; e.target.value = ""; runSearch(); } else e.target.blur(); return; }
   if (typing && e.target.id !== "q") return;
   if (e.isComposing) return;
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+  if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !$("app").classList.contains("reading")) {
     const ids = [...document.querySelectorAll(".card[data-id]")].map(c => c.dataset.id); if (!ids.length) return;
     e.preventDefault(); const i = ids.indexOf(state.selected), n = e.key === "ArrowDown" ? Math.min(ids.length - 1, i + 1) : Math.max(0, i - 1);
     select(ids[i < 0 ? 0 : n]);
