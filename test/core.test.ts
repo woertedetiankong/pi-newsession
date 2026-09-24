@@ -1,0 +1,215 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, readFile, rm, writeFile, appendFile, utimes } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { request } from "node:http";
+import { parseSession, SessionScanner, searchSnippet } from "../src/scan.ts";
+import { MetaStore } from "../src/meta.ts";
+import { Organizer, parseOrganized, organizeOne } from "../src/organize.ts";
+import { appendSessionName } from "../src/rename.ts";
+import { SessionsServer, type Binding } from "../src/server.ts";
+import { askSessions, candidateLines, parseAsk } from "../src/ask.ts";
+
+async function temp(t: any): Promise<string> { const dir = await mkdtemp(join(tmpdir(), "pi-sessions-test-")); t.after(() => rm(dir, { recursive: true, force: true })); return dir; }
+export function sessionFile(id: string, cwd: string, messages: [string, string][], extra: object[] = []): string {
+  const lines: object[] = [{ type: "session", version: 3, id, timestamp: "2026-09-01T08:00:00.000Z", cwd }, { type: "model_change", id: "m1", parentId: null, timestamp: "2026-09-01T08:00:00.100Z", provider: "p", modelId: "gpt-x" }];
+  messages.forEach(([role, text], i) => lines.push({ type: "message", id: `e${i}`, parentId: i ? `e${i - 1}` : "m1", timestamp: `2026-09-01T08:0${Math.min(i + 1, 9)}:00.000Z`, message: { role, content: role === "user" ? [{ type: "text", text }] : [{ type: "thinking", thinking: "hmm" }, { type: "text", text }] } }));
+  return [...lines, ...extra].map(l => JSON.stringify(l)).join("\n") + "\n";
+}
+
+test("parseSession extracts header, name, model, counts, preview and search text", () => {
+  const raw = sessionFile("abc", "/work/pi", [["user", "Why is SCROLL broken?\nsecond line"], ["assistant", "Because handleInput eats arrows"]],
+    [{ type: "session_info", id: "n1", parentId: "e1", timestamp: "2026-09-02T09:00:00.000Z", name: " Scroll fix " }]);
+  const r = parseSession("/x.jsonl", raw + "not json\n", new Date(0))!;
+  assert.equal(r.id, "abc"); assert.equal(r.cwd, "/work/pi"); assert.equal(r.name, "Scroll fix"); assert.equal(r.model, "gpt-x");
+  assert.equal(r.count, 2); assert.equal(r.firstUser, "Why is SCROLL broken?");
+  assert.equal(r.modified, "2026-09-02T09:00:00.000Z");
+  assert.deepEqual(r.messages.map(m => m.role), ["user", "assistant"]);
+  assert.ok(r.text.includes("why is scroll broken?") && r.text.includes("handleinput eats arrows"), "search text is lower-cased");
+  assert.equal(parseSession("/y.jsonl", '{"type":"message"}\n', new Date(0)), undefined);
+});
+
+test("scanner walks project folders and only re-parses changed files", async t => {
+  const root = await temp(t), dir = join(root, "--work-pi--");
+  await mkdir(dir);
+  const a = join(dir, "a.jsonl"), b = join(dir, "b.jsonl");
+  await writeFile(a, sessionFile("a", "/work/pi", [["user", "hello"]]));
+  await writeFile(b, sessionFile("b", "/work/pi", [["user", "world"], ["assistant", "ok"]]));
+  await writeFile(join(dir, "notes.txt"), "ignored");
+  const scanner = new SessionScanner(root);
+  assert.deepEqual((await scanner.scan()).map(r => r.id).sort(), ["a", "b"]);
+  const first = (await scanner.scan()).find(r => r.id === "a");
+  assert.equal((await scanner.scan()).find(r => r.id === "a"), first, "unchanged file is served from cache");
+  await appendFile(a, JSON.stringify({ type: "message", id: "z", parentId: "e0", timestamp: "2026-09-05T00:00:00.000Z", message: { role: "assistant", content: "again" } }) + "\n");
+  await utimes(a, new Date(), new Date(Date.now() + 5000));
+  const updated = (await scanner.scan()).find(r => r.id === "a")!;
+  assert.equal(updated.count, 2); assert.equal(updated.modified, "2026-09-05T00:00:00.000Z");
+  await rm(b);
+  assert.deepEqual((await scanner.scan()).map(r => r.id), ["a"]);
+  assert.deepEqual(await new SessionScanner(join(root, "missing")).scan(), []);
+});
+
+test("searchSnippet requires every word and centers on the first hit", () => {
+  const r = parseSession("/x", sessionFile("s", "/w", [["user", "开始"], ["assistant", "我们把缓存目录挂到 CI 上，构建快了很多"]]), new Date(0))!;
+  assert.match(searchSnippet(r, ["缓存", "ci"])!, /缓存目录挂到 CI/);
+  assert.equal(searchSnippet(r, ["缓存", "redis"]), undefined);
+  assert.equal(searchSnippet(r, []), undefined);
+});
+
+test("meta store patches, keeps manual titles over AI results and persists atomically", async t => {
+  const dir = await temp(t), file = join(dir, "sub", "meta.json"), store = new MetaStore(file);
+  await store.patch("a", { pinned: true, title: "  My   title " });
+  await store.organized("a", { title: "AI title", summary: "sum", tags: ["#Bug", "bug", "tui"] }, "2026-09-01T00:00:00.000Z");
+  assert.deepEqual(await store.get("a"), { pinned: true, title: "My title", titleSource: "manual", summary: "sum", tags: ["bug", "tui"], organizedAt: "2026-09-01T00:00:00.000Z" });
+  await store.organized("b", { title: "AI title", summary: "", tags: [] }, "t");
+  assert.equal((await store.get("b")).titleSource, "ai");
+  await store.patch("a", { pinned: false, title: "" });
+  assert.equal((await store.get("a")).pinned, undefined); assert.equal((await store.get("a")).title, undefined);
+  const saved = JSON.parse(await readFile(file, "utf8"));
+  assert.equal(saved.version, 1); assert.deepEqual(Object.keys(saved.sessions).sort(), ["a", "b"]);
+  assert.deepEqual(await new MetaStore(file).get("b"), saved.sessions.b);
+  await Promise.all([store.patch("c", { pinned: true }), store.patch("d", { archived: true })]);
+  assert.deepEqual(Object.keys(JSON.parse(await readFile(file, "utf8")).sessions).sort(), ["a", "b", "c", "d"]);
+});
+
+test("parseOrganized tolerates fences and cleans fields", () => {
+  assert.deepEqual(parseOrganized('```json\n{"title":"「滚动修复」","summary":" ok ","tags":["#TUI","tui","x"]}\n```'), { title: "滚动修复", summary: "ok", tags: ["tui", "x"] });
+  assert.throws(() => parseOrganized("no json"), /JSON/);
+  assert.throws(() => parseOrganized('{"title":""}'), /标题/);
+});
+
+test("organizeOne sends the conversation to the current model", async () => {
+  const r = parseSession("/x", sessionFile("s", "/w", [["user", "fix scroll"], ["assistant", "done"]]), new Date(0))!;
+  let seen: any;
+  const ctx = { model: { id: "m" }, modelRegistry: { complete: async (_m: unknown, req: any) => { seen = req; return { stopReason: "stop", content: [{ type: "text", text: '{"title":"修复滚动","summary":"s","tags":["bug"]}' }] }; } } } as any;
+  assert.deepEqual(await organizeOne(ctx, r, ["bug"], new AbortController().signal), { title: "修复滚动", summary: "s", tags: ["bug"] });
+  assert.match(seen.messages[0].content[0].text, /fix scroll/);
+  await assert.rejects(organizeOne({ model: undefined } as any, r, [], new AbortController().signal), /没有选择模型/);
+});
+
+test("organizer runs jobs in order, counts failures and cancels", async () => {
+  const ran: string[] = [];
+  const org = new Organizer(async id => { await delay(5); ran.push(id); if (id === "bad") throw new Error("boom"); });
+  org.enqueue(["a", "bad"]); org.enqueue(["a", "c"]);
+  while (org.status.running) await delay(5);
+  assert.deepEqual(ran, ["a", "bad", "c"]);
+  assert.deepEqual({ ...org.status }, { running: false, total: 3, done: 2, failed: 1, lastError: "boom" });
+  const slow = new Organizer(async (_id, signal) => { await delay(30); if (signal.aborted) throw new Error("aborted"); ran.push("slow"); });
+  slow.enqueue(["x", "y"]); await delay(5); slow.cancel();
+  slow.enqueue(["z"]);
+  while (slow.status.running) await delay(5);
+  await delay(40);
+  assert.deepEqual(ran.slice(3), ["slow"], "only the job queued after cancel completes");
+});
+
+test("appendSessionName appends a session_info entry chained to the last entry", async t => {
+  const dir = await temp(t), file = join(dir, "s.jsonl");
+  await writeFile(file, sessionFile("s", "/w", [["user", "hi"], ["assistant", "yo"]]));
+  await appendSessionName(file, "New\nname");
+  const r = parseSession(file, await readFile(file, "utf8"), new Date())!;
+  assert.equal(r.name, "New name");
+  const last = JSON.parse((await readFile(file, "utf8")).trim().split("\n").at(-1)!);
+  assert.equal(last.type, "session_info"); assert.equal(last.parentId, "e1");
+});
+
+test("server serves the page, guards the API and routes actions to the binding", async t => {
+  const root = await temp(t), dir = join(root, "sessions", "--w--");
+  await mkdir(dir, { recursive: true });
+  const path = join(dir, "a.jsonl");
+  await writeFile(path, sessionFile("a", "/w", [["user", "讨论缓存失效"], ["assistant", "用互斥锁重建"]]));
+  await writeFile(join(dir, "b.jsonl"), sessionFile("b", "/w", [["user", "别的事"]]));
+  const web = join(root, "index.html"); await writeFile(web, "<p>page</p>");
+  const server = new SessionsServer({ root: join(root, "sessions"), metaFile: join(root, "meta.json"), webFile: web, token: "f".repeat(32) });
+  const opened: string[] = [], renamed: string[] = [];
+  const binding: Binding = {
+    currentSessionFile: () => join(dir, "b.jsonl"),
+    model: () => ({ model: { id: "m" }, modelRegistry: { complete: async () => ({ stopReason: "stop", content: [{ type: "text", text: '{"title":"缓存重建","summary":"加锁","tags":["cache"]}' }] }) } }) as any,
+    open: async p => { opened.push(p); return { ok: true, message: "ok" }; },
+    rename: async (p, title) => { renamed.push(`${p}:${title}`); },
+  };
+  server.binding = binding;
+  const url = await server.start();
+  t.after(() => server.close());
+  const base = url.replace(/\/#.*/, "");
+  const call = (p: string, body?: object, token = "f".repeat(32)) => fetch(base + p, body ? { method: "POST", headers: { "x-token": token, "content-type": "application/json" }, body: JSON.stringify(body) } : { headers: { "x-token": token } });
+
+  assert.match(url, /#token=f{32}$/);
+  assert.equal(await (await fetch(base + "/")).text(), "<p>page</p>");
+  assert.equal((await call("/api/sessions", undefined, "wrong")).status, 401);
+  const list = await (await call("/api/sessions")).json();
+  assert.equal(list.current, join(dir, "b.jsonl")); assert.equal(list.model, "m");
+  assert.deepEqual(list.sessions.map((s: any) => s.id).sort(), ["a", "b"]);
+  assert.equal(list.sessions[0].text, undefined, "full text is not shipped to the page");
+  assert.deepEqual((await (await call("/api/search?q=缓存")).json()).hits.map((h: any) => h.id), ["a"]);
+  assert.equal((await (await call("/api/session?id=a")).json()).messages.length, 2);
+  assert.equal((await call("/api/session?id=zzz")).status, 404);
+
+  const meta = await (await call("/api/meta", { id: "a", title: "缓存方案", pinned: true })).json();
+  assert.deepEqual(meta.meta, { title: "缓存方案", titleSource: "manual", pinned: true });
+  assert.deepEqual(renamed, [`${path}:缓存方案`]);
+  assert.deepEqual(await (await call("/api/open", { id: "a" })).json(), { ok: true, message: "ok" });
+  assert.deepEqual(opened, [path]);
+
+  await call("/api/organize", { ids: ["a", "b"] });
+  while (server.organizer.status.running) await delay(5);
+  const after = await (await call("/api/sessions")).json(), metaOf = (id: string) => after.sessions.find((s: any) => s.id === id).meta;
+  assert.equal(metaOf("a").title, "缓存方案", "manual title survives AI organize");
+  assert.equal(metaOf("a").summary, "加锁");
+  assert.equal(metaOf("b").title, "缓存重建");
+
+  server.binding = undefined;
+  assert.equal((await call("/api/open", { id: "a" })).status, 503);
+  const port = Number(new URL(base).port);
+  const status = await new Promise<number>((resolve, reject) => request({ host: "127.0.0.1", port, path: "/api/sessions", headers: { "x-token": "f".repeat(32), host: `evil.example:${port}` } }, res => { res.resume(); resolve(res.statusCode!); }).on("error", reject).end());
+  assert.equal(status, 403, "DNS-rebinding host is rejected");
+  assert.equal((await fetch(base + "/api/meta", { method: "POST", headers: { "x-token": "f".repeat(32), "content-type": "text/plain" }, body: "{}" })).status, 415);
+});
+
+test("ask: candidate lines are compact, newest first, and count unorganized sessions", () => {
+  const a = parseSession("/a", sessionFile("a", "/w/pi", [["user", "终端里|滚动\n失效"]]), new Date(0))!;
+  const b = { ...parseSession("/b", sessionFile("b", "/w/blog", [["user", "构建慢"]]), new Date(0))!, modified: "2026-09-10T00:00:00.000Z" };
+  const empty = { ...a, id: "e", count: 0 };
+  const { lines, ids, unorganized } = candidateLines([a, b, empty], { b: { title: "构建加速", summary: "缓存 CI", tags: ["ci"] } });
+  assert.deepEqual(ids, ["b", "a"], "newest first, empty sessions skipped");
+  assert.equal(lines[0], "1|blog|" + lines[0].split("|")[2] + "|构建加速|缓存 CI|ci|构建慢");
+  assert.match(lines[1], /^2\|pi\|.*\|\|\|\|终端里 滚动$/, "pipes and newlines inside fields are flattened");
+  assert.equal(unorganized, 1);
+});
+
+test("ask: parseAsk keeps only real, unique candidate numbers", () => {
+  const ids = ["a", "b", "c"];
+  assert.deepEqual(parseAsk('```json\n{"results":[{"n":2,"reason":"讲滚动"},{"n":9,"reason":"编造"},{"n":2,"reason":"重复"},{"n":"1"}]}\n```', ids),
+    [{ id: "b", reason: "讲滚动" }, { id: "a", reason: "" }]);
+  assert.deepEqual(parseAsk('{"results":[]}', ids), []);
+  assert.throws(() => parseAsk("抱歉", ids), /JSON/);
+});
+
+test("ask: askSessions sends query, today and candidates to the current model", async () => {
+  const r = parseSession("/a", sessionFile("a", "/w/pi", [["user", "arrow keys do not scroll"]]), new Date(0))!;
+  let seen: any;
+  const ctx = { model: { id: "m" }, modelRegistry: { complete: async (_m: unknown, req: any) => { seen = JSON.parse(req.messages[0].content[0].text); return { stopReason: "stop", usage: { input: 120, output: 30 }, content: [{ type: "text", text: '{"results":[{"n":1,"reason":"方向键滚动"}]}' }] }; } } } as any;
+  const out = await askSessions(ctx, "上周那个滚动 bug", [r], {}, new AbortController().signal, new Date(2026, 8, 23));
+  assert.deepEqual(out, { results: [{ id: "a", reason: "方向键滚动" }], candidates: 1, unorganized: 1, usage: { input: 120, output: 30 } });
+  assert.equal(seen.today, "2026-09-23"); assert.equal(seen.query, "上周那个滚动 bug"); assert.match(seen.sessions, /arrow keys do not scroll/);
+  assert.deepEqual(await askSessions(ctx, "x", [], {}, new AbortController().signal), { results: [], candidates: 0, unorganized: 0 });
+});
+
+test("server /api/ask validates input and returns ranked hits", async t => {
+  const root = await temp(t), dir = join(root, "sessions", "--w--");
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "a.jsonl"), sessionFile("a", "/w", [["user", "滚动坏了"]]));
+  await writeFile(join(root, "index.html"), "");
+  const server = new SessionsServer({ root: join(root, "sessions"), metaFile: join(root, "meta.json"), webFile: join(root, "index.html"), token: "e".repeat(32) });
+  let model: any = { id: "m" };
+  server.binding = { currentSessionFile: () => undefined, open: async () => ({ ok: true, message: "" }), rename: async () => {},
+    model: () => ({ model, modelRegistry: { complete: async () => ({ stopReason: "stop", content: [{ type: "text", text: '{"results":[{"n":1,"reason":"滚动"}]}' }] }) } }) as any };
+  const base = (await server.start()).replace(/\/#.*/, "");
+  t.after(() => server.close());
+  const ask = (body: object) => fetch(base + "/api/ask", { method: "POST", headers: { "x-token": "e".repeat(32), "content-type": "application/json" }, body: JSON.stringify(body) });
+  assert.equal((await ask({ query: "  " })).status, 400);
+  assert.deepEqual(await (await ask({ query: "滚动" })).json(), { results: [{ id: "a", reason: "滚动" }], candidates: 1, unorganized: 1, model: "m" });
+  model = undefined;
+  assert.equal((await ask({ query: "滚动" })).status, 409);
+});

@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pi 会话管理</title>
+<style>
+:root {
+  --bg: #f6f6f3; --panel: #ffffff; --side: #efefea; --line: #e4e3dc; --line-strong: #d3d2c9;
+  --text: #1f1f1c; --muted: #6d6c64; --faint: #9c9b92;
+  --accent: #3d5afe; --accent-soft: #e8ecff; --accent-text: #2a3fc2;
+  --ok: #2e9d6a; --idle: #b5b4ab; --warn: #c98a12;
+  --mark: #fff1a8; --user: #f1f0ea; --shadow: 0 1px 2px rgba(20,20,10,.05), 0 4px 16px rgba(20,20,10,.04);
+  --r: 10px;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161615; --panel: #1e1e1c; --side: #1a1a18; --line: #2c2c29; --line-strong: #3a3a36;
+    --text: #ecebe6; --muted: #a09f97; --faint: #6f6e67;
+    --accent: #7b8cff; --accent-soft: #262b4a; --accent-text: #aab6ff;
+    --ok: #4cc38a; --idle: #5c5b55; --warn: #e0a83a;
+    --mark: #5a4e14; --user: #262624; --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161615; --panel: #1e1e1c; --side: #1a1a18; --line: #2c2c29; --line-strong: #3a3a36;
+  --text: #ecebe6; --muted: #a09f97; --faint: #6f6e67;
+  --accent: #7b8cff; --accent-soft: #262b4a; --accent-text: #aab6ff;
+  --ok: #4cc38a; --idle: #5c5b55; --warn: #e0a83a;
+  --mark: #5a4e14; --user: #262624; --shadow: none;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+.btn:disabled { cursor: default; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--text); font: 14px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
+mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1px; }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12px; }
+
+.app { display: grid; grid-template-columns: 232px minmax(320px, 1fr) minmax(340px, 1.1fr); grid-template-rows: 56px 1fr; height: 100vh; }
+header { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.brand { font-weight: 650; letter-spacing: .2px; white-space: nowrap; display: flex; align-items: center; gap: 8px; min-width: 200px; }
+.brand .logo { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 13px; }
+.search { flex: 1; max-width: 560px; position: relative; }
+.search input { width: 100%; height: 36px; border: 1px solid var(--line-strong); background: var(--bg); color: var(--text); border-radius: 8px; padding: 0 34px 0 34px; font: inherit; outline: none; }
+.search input:focus { border-color: var(--accent); background: var(--panel); box-shadow: 0 0 0 3px var(--accent-soft); }
+.search svg { position: absolute; left: 11px; top: 10px; color: var(--faint); }
+.search kbd { position: absolute; right: 10px; top: 8px; }
+kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; }
+.seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 8px; overflow: hidden; }
+.seg button { padding: 5px 10px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.seg button + button { border-left: 1px solid var(--line-strong); }
+.seg button.on { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
+.spacer { flex: 1; }
+.hint { font-size: 12px; color: var(--faint); white-space: nowrap; }
+
+aside { background: var(--side); border-right: 1px solid var(--line); overflow-y: auto; padding: 12px 8px 24px; }
+.nav-label { font-size: 11px; font-weight: 600; color: var(--faint); letter-spacing: .6px; padding: 12px 10px 4px; }
+.nav { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; border-radius: 7px; text-align: left; color: var(--text); }
+.nav:hover { background: color-mix(in srgb, var(--line) 70%, transparent); }
+.nav.on { background: var(--panel); box-shadow: var(--shadow); font-weight: 600; }
+.nav .ico { width: 16px; text-align: center; color: var(--muted); flex: none; }
+.nav .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav .cnt { font: 11.5px var(--mono); color: var(--faint); }
+.nav.sub { padding-left: 34px; font-size: 13px; color: var(--muted); }
+.nav.sub.on { color: var(--text); }
+.caret { transition: transform .15s; display: inline-block; }
+.caret.open { transform: rotate(90deg); }
+
+main { overflow-y: auto; border-right: 1px solid var(--line); }
+.list-head { position: sticky; top: 0; z-index: 2; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); padding: 14px 20px 10px; border-bottom: 1px solid var(--line); display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.list-head h2 { margin: 0; font-size: 16px; font-weight: 650; }
+.list-head .sub { color: var(--muted); font-size: 12.5px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; width: 100%; }
+.chip { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: var(--accent-soft); color: var(--accent-text); display: inline-flex; gap: 4px; align-items: center; }
+.group { padding: 4px 12px 8px; }
+.group-title { display: flex; align-items: center; gap: 8px; padding: 14px 8px 6px; font-size: 12.5px; font-weight: 600; color: var(--muted); width: 100%; text-align: left; }
+.group-title .line { flex: 1; height: 1px; background: var(--line); }
+.group-title .num { color: var(--faint); font-weight: 400; }
+.card { display: block; width: 100%; text-align: left; padding: 10px 12px; border-radius: var(--r); border: 1px solid transparent; margin-bottom: 2px; }
+.card:hover { background: var(--panel); border-color: var(--line); }
+.card.on { background: var(--panel); border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.card .row1 { display: flex; align-items: center; gap: 8px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--idle); }
+.dot.active { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent); }
+.card .title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .title.raw { font-weight: 450; color: var(--muted); font-style: italic; }
+.card .time { color: var(--muted); flex: none; }
+.card .summary { color: var(--muted); font-size: 13px; margin: 3px 0 0 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .meta { display: flex; gap: 6px; align-items: center; margin: 5px 0 0 15px; font-size: 11.5px; color: var(--faint); flex-wrap: wrap; }
+.tag { color: var(--accent-text); }
+.proj { border: 1px solid var(--line-strong); border-radius: 4px; padding: 0 5px; color: var(--muted); }
+.pin { color: var(--warn); font-size: 12px; }
+.empty { padding: 60px 24px; text-align: center; color: var(--faint); }
+
+section.preview { overflow-y: auto; background: var(--panel); }
+.pv { padding: 22px 26px 40px; max-width: 760px; }
+.pv h1 { font-size: 19px; margin: 0 0 4px; line-height: 1.35; display: flex; gap: 8px; align-items: center; }
+.pv h1 input { font: inherit; color: inherit; flex: 1; border: 1px solid var(--accent); border-radius: 6px; padding: 2px 6px; background: var(--bg); outline: none; }
+.pv .raw-title { font-size: 12.5px; color: var(--faint); margin-bottom: 12px; }
+.facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 12.5px; margin: 14px 0 16px; padding: 12px 14px; background: var(--bg); border-radius: 8px; }
+.facts dt { color: var(--faint); }
+.facts dd { margin: 0; overflow-wrap: anywhere; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+.btn { height: 32px; padding: 0 12px; border-radius: 7px; border: 1px solid var(--line-strong); font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+.btn:hover { background: var(--bg); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.08); background: var(--accent); }
+.summary-box { border-left: 3px solid var(--accent); padding: 4px 0 4px 12px; margin-bottom: 20px; color: var(--text); }
+.summary-box .lbl { font-size: 11px; color: var(--faint); font-weight: 600; letter-spacing: .5px; }
+.pv h3 { font-size: 12px; color: var(--faint); letter-spacing: .5px; margin: 0 0 10px; font-weight: 600; }
+.msg { margin-bottom: 12px; display: flex; gap: 10px; }
+.msg .who { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; background: var(--user); color: var(--muted); }
+.msg.assistant .who { background: var(--accent-soft); color: var(--accent-text); }
+.msg .body { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; }
+.msg.user .body { background: var(--user); border-radius: 8px; padding: 6px 10px; }
+.more { color: var(--faint); font-size: 12.5px; text-align: center; padding: 6px; border-top: 1px dashed var(--line); margin-top: 8px; }
+
+.reason { color: var(--accent-text); font-size: 13px; margin: 3px 0 0 15px; }
+.ai-status { font-size: 12.5px; color: var(--muted); width: 100%; }
+.ai-status button { color: var(--accent-text); text-decoration: underline; }
+.spin { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--accent-soft); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -1px; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); background: var(--text); color: var(--bg); padding: 9px 16px; border-radius: 8px; font-size: 13px; opacity: 0; transition: .2s; pointer-events: none; max-width: calc(100vw - 32px); }
+.toast.show { opacity: 1; transform: translateX(-50%); }
+.banner { font-size: 12px; color: var(--muted); background: var(--accent-soft); padding: 6px 20px; }
+
+.back { display: none; }
+@media (max-width: 1080px) {
+  .app { grid-template-columns: 210px minmax(0, 1fr); }
+  section.preview { display: none; }
+  .app.detail section.preview { display: block; position: fixed; inset: 56px 0 0 auto; width: min(560px, 100vw); box-shadow: -8px 0 24px rgba(0,0,0,.12); z-index: 5; }
+  .back { display: inline-flex; }
+  .hint { display: none; }
+}
+@media (max-width: 720px) {
+  #ask { order: 4; }
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto 1fr; height: auto; min-height: 100vh; }
+  .seg button { padding: 5px 8px; }
+  .card .summary { white-space: normal; }
+  header { flex-wrap: wrap; padding: 10px 16px; gap: 10px; }
+  .brand { min-width: 0; }
+  .search { order: 3; flex-basis: 100%; max-width: none; }
+  aside { max-height: 34vh; border-right: 0; border-bottom: 1px solid var(--line); }
+  .app.detail section.preview { inset: 0; width: 100vw; }
+  .list-head, .group { padding-left: 8px; padding-right: 8px; }
+}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header>
+    <div class="brand"><span class="logo">π</span>会话</div>
+    <label class="search">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="q" placeholder="搜索内容，或 @项目 #标签 上周 8月" autocomplete="off">
+      <kbd>/</kbd>
+    </label>
+    <button class="btn" id="ask" title="用 pi 当前的模型理解你的描述，在所有会话的标题和摘要中查找（每次 1 次模型请求）。快捷键 Shift+Enter">✨ 用 AI 找</button>
+    <div class="spacer"></div>
+    <button class="btn" id="organize" hidden></button>
+    <div class="seg" id="titleSeg" title="标题">
+      <button data-v="ai">整理后标题</button><button data-v="raw">原始标题</button>
+    </div>
+    <div class="seg" id="timeSeg" title="按哪个时间">
+      <button data-v="modified">最后活动</button><button data-v="created">创建时间</button>
+    </div>
+  </header>
+  <aside id="side"></aside>
+  <main id="list"><div class="empty">正在读取会话…</div></main>
+  <section class="preview" id="preview"></section>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const TOKEN = (() => {
+  const m = location.hash.match(/token=([a-f0-9]+)/);
+  if (m) { try { localStorage.setItem("pi-sessions-token", m[1]); } catch {} history.replaceState(null, "", location.pathname); return m[1]; }
+  try { return localStorage.getItem("pi-sessions-token") || ""; } catch { return ""; }
+})();
+
+const state = {
+  sessions: [], current: null, model: null, connected: true, organize: { running: false }, error: "",
+  titleMode: "ai", timeField: "modified", q: "", hits: null,
+  scope: { kind: "all" }, openProjects: new Set(), selected: null, collapsed: new Set(["零碎"]),
+  editing: false, details: new Map(), loaded: false, ai: null,
+};
+try { const p = JSON.parse(localStorage.getItem("pi-sessions-prefs") || "{}"); if (p.titleMode) state.titleMode = p.titleMode; if (p.timeField) state.timeField = p.timeField; } catch {}
+const savePrefs = () => { try { localStorage.setItem("pi-sessions-prefs", JSON.stringify({ titleMode: state.titleMode, timeField: state.timeField })); } catch {} };
+
+// ---- API ----
+async function api(path, body, signal) {
+  let res;
+  try {
+    res = await fetch(path, body === undefined ? { headers: { "x-token": TOKEN }, signal } : { method: "POST", headers: { "x-token": TOKEN, "content-type": "application/json" }, body: JSON.stringify(body), signal });
+  } catch (e) {
+    if (e.name === "AbortError") throw e; throw Object.assign(new Error("连接不到 pi。pi 可能已经退出，在 pi 中运行 /sessions 重新打开。"), { offline: true }); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(data.error || "请求失败 " + res.status), { status: res.status });
+  return data;
+}
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const WD = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+const pad = n => String(n).padStart(2, "0");
+const DAY = 864e5;
+function startOfDay(t) { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); }
+function fmtFull(t) { const d = new Date(t); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+function dayKey(t) { const d = new Date(t), y = new Date().getFullYear(); return `${d.getFullYear() === y ? "" : d.getFullYear() + "-"}${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${WD[d.getDay()]}`; }
+function monthKey(t) { const d = new Date(t); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; }
+const HOME = () => { const c = state.sessions.map(s => s.cwd).find(c => /^\/(Users|home)\/[^/]+$/.test(c)); return c || ""; };
+function projName(cwd) { if (!cwd) return "未知目录"; if (cwd === HOME() || /^\/(Users|home)\/[^/]+$/.test(cwd)) return "~ (home)"; return cwd.split(/[\\/]/).filter(Boolean).pop(); }
+function tilde(p) { const m = p.match(/^\/(Users|home)\/[^/]+/); return m ? "~" + p.slice(m[0].length) : p; }
+const T = s => new Date(s[state.timeField]).getTime();
+const rawTitle = s => s.name || s.firstUser || "（空会话）";
+const title = s => state.titleMode === "ai" ? (s.meta.title || rawTitle(s)) : rawTitle(s);
+const tags = s => s.meta.tags || [];
+const active = s => Date.now() - new Date(s.modified).getTime() < 7 * DAY;
+const isCurrent = s => s.path === state.current;
+const needsOrganize = s => !s.meta.organizedAt && s.count >= 2;
+
+// ---- 搜索：自由文本（服务端全文） + @项目 + #标签 + 时间词 ----
+function parseQuery(q) {
+  const out = { words: [], proj: [], tags: [], range: null, labels: [] }, now = Date.now(), today = startOfDay(now);
+  const wd = (new Date(today).getDay() + 6) % 7, weekStart = today - wd * DAY, d = new Date(today);
+  const times = {
+    "今天": [today, now + DAY], "昨天": [today - DAY, today], "前天": [today - 2 * DAY, today - DAY],
+    "本周": [weekStart, now + DAY], "这周": [weekStart, now + DAY], "上周": [weekStart - 7 * DAY, weekStart],
+    "本月": [new Date(d.getFullYear(), d.getMonth(), 1).getTime(), now + DAY], "上个月": [new Date(d.getFullYear(), d.getMonth() - 1, 1).getTime(), new Date(d.getFullYear(), d.getMonth(), 1).getTime()],
+  };
+  for (const tok of q.trim().split(/\s+/).filter(Boolean)) {
+    if (tok.startsWith("@") && tok.length > 1) { out.proj.push(tok.slice(1).toLowerCase()); out.labels.push("项目 " + tok.slice(1)); continue; }
+    if (tok.startsWith("#") && tok.length > 1) { out.tags.push(tok.slice(1).toLowerCase()); out.labels.push("标签 " + tok); continue; }
+    if (times[tok]) { out.range = times[tok]; out.labels.push("时间 " + tok); continue; }
+    const m = tok.match(/^(?:(\d{4})[-年])?(\d{1,2})月$/);
+    if (m && +m[2] >= 1 && +m[2] <= 12) { const y = m[1] ? +m[1] : new Date().getFullYear(), s = new Date(y, +m[2] - 1, 1).getTime(), e = new Date(y, +m[2], 1).getTime(); out.range = [s, e]; out.labels.push(`时间 ${y}-${pad(+m[2])}`); continue; }
+    const md = tok.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (md) { const s = new Date(+md[1], +md[2] - 1, +md[3]).getTime(); out.range = [s, s + DAY]; out.labels.push("时间 " + tok); continue; }
+    out.words.push(tok.toLowerCase());
+  }
+  return out;
+}
+function matches(s, pq) {
+  if (pq.proj.length && !pq.proj.every(p => projName(s.cwd).toLowerCase().includes(p) || s.cwd.toLowerCase().includes(p))) return false;
+  if (pq.tags.length && !pq.tags.every(t => tags(s).some(x => x.includes(t)))) return false;
+  if (pq.range && !(T(s) >= pq.range[0] && T(s) < pq.range[1])) return false;
+  if (pq.words.length) {
+    if (state.hits?.has(s.id)) return true;
+    const h = [s.meta.title, s.meta.summary, tags(s).join(" "), projName(s.cwd), s.name, s.firstUser].join("\n").toLowerCase();
+    if (!pq.words.every(w => h.includes(w))) return false;
+  }
+  return true;
+}
+function highlight(text, words) {
+  const h = esc(text); if (!words.length) return h;
+  const re = new RegExp("(" + words.map(w => esc(w).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")", "gi");
+  return h.replace(re, "<mark>$1</mark>");
+}
+const bold = html => html.replace(/\*\*([^*\n]+?)\*\*/g, "<strong>$1</strong>");
+let searchTimer, searchSeq = 0;
+function runSearch() {
+  clearTimeout(searchTimer);
+  const words = parseQuery(state.q).words;
+  if (!words.length) { state.hits = null; afterFilter(); return; }
+  searchTimer = setTimeout(async () => {
+    const seq = ++searchSeq;
+    try {
+      const { hits } = await api("/api/search?q=" + encodeURIComponent(words.join(" ")));
+      if (seq !== searchSeq) return;
+      state.hits = new Map(hits.map(h => [h.id, h.snippet]));
+    } catch (e) { state.hits = new Map(); toast(e.message); }
+    afterFilter();
+  }, 160);
+  afterFilter();
+}
+function afterFilter() { const v = visible(); if (!v.some(s => s.id === state.selected)) state.selected = v[0]?.id; renderList(); renderPreview(); }
+
+// ---- 分组：置顶 / 最近 7 天按日 / 更早按月 / 零碎 ----
+function visible() {
+  const pq = parseQuery(state.q), sc = state.scope;
+  return state.sessions.filter(s => {
+    if (sc.kind === "archived") { if (!s.meta.archived) return false; }
+    else if (s.meta.archived && !state.q) return false;
+    if (sc.kind === "pinned" && !s.meta.pinned) return false;
+    if (sc.kind === "active" && !active(s)) return false;
+    if ((sc.kind === "project" || sc.kind === "bucket") && s.cwd !== sc.cwd) return false;
+    if (sc.kind === "bucket" && (sc.key === "recent" ? !bucketOf(s).day : bucketOf(s).key !== sc.key)) return false;
+    return matches(s, pq);
+  }).sort((a, b) => T(b) - T(a));
+}
+function bucketOf(s) {
+  const t = T(s), recent = startOfDay(Date.now()) - 6 * DAY;
+  return t >= recent ? { key: "d:" + dayKey(t), label: dayKey(t), day: true } : { key: "m:" + monthKey(t), label: monthKey(t), day: false };
+}
+function groups(list) {
+  const out = [], byKey = new Map(), pinned = [], frag = [];
+  const pinSection = state.scope.kind !== "pinned" && !state.q;
+  for (const s of list) {
+    if (pinSection && s.meta.pinned) { pinned.push(s); continue; }
+    if (!state.q && s.count <= 1 && !isCurrent(s) && state.scope.kind !== "archived") { frag.push(s); continue; }
+    const b = bucketOf(s);
+    if (!byKey.has(b.key)) { const g = { key: b.key, label: b.label, items: [] }; byKey.set(b.key, g); out.push(g); }
+    byKey.get(b.key).items.push(s);
+  }
+  if (pinned.length) out.unshift({ key: "置顶", label: "📌 置顶", items: pinned });
+  if (frag.length) out.push({ key: "零碎", label: "零碎（1 条消息以内）", items: frag });
+  return out;
+}
+
+// ---- 渲染 ----
+function renderHeader() {
+  for (const [id, key] of [["titleSeg", "titleMode"], ["timeSeg", "timeField"]])
+    for (const b of $(id).children) b.classList.toggle("on", b.dataset.v === state[key]);
+  const o = state.organize, b = $("organize"), pending = state.sessions.filter(needsOrganize).length;
+  b.hidden = !o.running && !pending;
+  b.classList.toggle("primary", !o.running);
+  b.textContent = o.running ? `整理中 ${o.done + o.failed}/${o.total} · 取消` : `✨ AI 整理 ${pending} 个会话`;
+  b.title = o.running ? "点击取消剩余的整理" : "用 pi 当前的模型为未整理的会话生成标题、摘要和标签";
+}
+function renderSide() {
+  const list = state.sessions, live = list.filter(s => !s.meta.archived);
+  const byProj = new Map();
+  for (const s of live) { if (!byProj.has(s.cwd)) byProj.set(s.cwd, []); byProj.get(s.cwd).push(s); }
+  const projs = [...byProj.entries()].sort((a, b) => Math.max(...b[1].map(T)) - Math.max(...a[1].map(T)));
+  const sc = state.scope, on = (k, extra = true) => sc.kind === k && extra ? " on" : "";
+  const scope = o => esc(JSON.stringify(o));
+  let h = `<button class="nav${on("all")}" data-scope="${scope({ kind: "all" })}"><span class="ico">≡</span><span class="name">全部会话</span><span class="cnt">${live.length}</span></button>
+  <button class="nav${on("active")}" data-scope="${scope({ kind: "active" })}"><span class="ico" style="color:var(--ok)">●</span><span class="name">最近 7 天活跃</span><span class="cnt">${live.filter(active).length}</span></button>
+  <button class="nav${on("pinned")}" data-scope="${scope({ kind: "pinned" })}"><span class="ico">📌</span><span class="name">置顶</span><span class="cnt">${live.filter(s => s.meta.pinned).length}</span></button>
+  <div class="nav-label">项目</div>`;
+  for (const [cwd, items] of projs) {
+    const open = state.openProjects.has(cwd);
+    h += `<button class="nav${on("project", sc.cwd === cwd)}" data-scope="${scope({ kind: "project", cwd })}" data-toggle="${esc(cwd)}" title="${esc(tilde(cwd))}">
+      <span class="ico"><span class="caret${open ? " open" : ""}">▸</span></span><span class="name">${esc(projName(cwd))}</span><span class="cnt">${items.length}</span></button>`;
+    if (open) {
+      const bs = new Map(); let recent = 0;
+      for (const s of items) { const b = bucketOf(s); if (b.day) recent++; else bs.set(b.key, (bs.get(b.key) || 0) + 1); }
+      if (recent) h += `<button class="nav sub${on("bucket", sc.cwd === cwd && sc.key === "recent")}" data-scope="${scope({ kind: "bucket", cwd, key: "recent" })}"><span class="name">最近 7 天</span><span class="cnt">${recent}</span></button>`;
+      for (const [k, n] of [...bs.entries()].sort((a, b) => b[0].localeCompare(a[0])))
+        h += `<button class="nav sub${on("bucket", sc.cwd === cwd && sc.key === k)}" data-scope="${scope({ kind: "bucket", cwd, key: k })}"><span class="name">${esc(k.slice(2))}</span><span class="cnt">${n}</span></button>`;
+    }
+  }
+  if (!projs.length) h += `<div class="hint" style="padding:4px 10px">暂无</div>`;
+  const tagCount = new Map(); for (const s of live) for (const t of tags(s)) tagCount.set(t, (tagCount.get(t) || 0) + 1);
+  if (tagCount.size) h += `<div class="nav-label">标签</div><div style="display:flex;flex-wrap:wrap;gap:6px;padding:4px 10px">` +
+    [...tagCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 16).map(([t, n]) => `<button class="chip" data-tag="${esc(t)}">#${esc(t)} <span class="num" style="font-size:11px;opacity:.7">${n}</span></button>`).join("") + `</div>`;
+  h += `<div class="nav-label">其他</div><button class="nav${on("archived")}" data-scope="${scope({ kind: "archived" })}"><span class="ico">🗄</span><span class="name">已归档</span><span class="cnt">${list.filter(s => s.meta.archived).length}</span></button>`;
+  $("side").innerHTML = h;
+}
+function scopeTitle() {
+  const sc = state.scope;
+  if (sc.kind === "project") return projName(sc.cwd);
+  if (sc.kind === "bucket") return projName(sc.cwd) + " · " + (sc.key === "recent" ? "最近 7 天" : sc.key.slice(2));
+  return { all: "全部会话", active: "最近 7 天活跃", pinned: "置顶", archived: "已归档" }[sc.kind];
+}
+function card(s, pq, showProj, line) {
+  const snip = pq.words.length ? state.hits?.get(s.id) : null, sum = snip || s.meta.summary || (state.titleMode === "ai" && s.meta.title ? s.firstUser : "");
+  const raw = !(state.titleMode === "ai" && s.meta.title) && !s.name;
+  return `<button class="card${state.selected === s.id ? " on" : ""}" data-id="${esc(s.id)}">
+    <div class="row1"><span class="dot${active(s) ? " active" : ""}" title="${active(s) ? "最近 7 天有活动" : "7 天未活动"}"></span>
+      <span class="title${raw ? " raw" : ""}">${highlight(title(s), pq.words)}</span>
+      ${isCurrent(s) ? `<span class="chip" style="font-size:11px">当前</span>` : ""}
+      ${s.meta.pinned ? `<span class="pin">📌</span>` : ""}
+      <span class="time num">${fmtFull(T(s))}</span></div>
+    ${line ? `<div class="reason">✨ ${esc(line)}</div>` : ""}
+    ${sum ? `<div class="summary">${highlight(sum, pq.words)}</div>` : ""}
+    <div class="meta">${showProj ? `<span class="proj">${esc(projName(s.cwd))}</span>` : ""}<span class="num">${s.count} 条</span>${tags(s).map(t => `<span class="tag">#${esc(t)}</span>`).join("")}${s.meta.archived ? `<span>已归档</span>` : ""}</div>
+  </button>`;
+}
+function aiList() {
+  const ai = state.ai, none = { words: [] };
+  const items = (ai.results || []).map(r => [state.sessions.find(s => s.id === r.id), r.reason]).filter(x => x[0]);
+  let h = `<div class="list-head"><h2>✨ AI 搜索</h2><span class="sub">${ai.loading ? "" : items.length + " 个相关会话"}</span>
+    <button class="btn" data-ai="exit" style="margin-left:auto;height:26px;font-size:12px">✕ 退出 AI 搜索</button>
+    <div class="chips"><span class="chip">${esc(ai.query)}</span></div>
+    <div class="ai-status">${ai.loading ? `<span class="spin"></span>正在用 ${esc(state.model || "当前模型")} 理解你的描述…` :
+      ai.error ? "" : `由 ${esc(ai.model)} 按相关度排序 · 看了 ${ai.candidates} 个会话${ai.usage ? ` · 约 ${(ai.usage.input + ai.usage.output).toLocaleString()} tokens` : ""}`}
+    ${!ai.loading && ai.unorganized ? `<br>其中 ${ai.unorganized} 个会话还没有摘要，只能根据标题和首句判断。<button data-ai="organize">先 AI 整理</button>结果会更准。` : ""}</div></div>`;
+  if (ai.error) h += `<div class="empty">${esc(ai.error)}</div>`;
+  else if (!ai.loading && !items.length) h += `<div class="empty">没有找到相关会话<br><span style="font-size:12.5px">换个说法，或补充项目、大概时间试试</span></div>`;
+  h += `<div class="group">` + items.map(([s, reason]) => card(s, none, true, reason)).join("") + `</div>`;
+  return h;
+}
+let askAbort;
+async function ask() {
+  const query = state.q.trim();
+  if (!query) { $("q").focus(); toast("先在搜索框里描述你要找的会话，例如：上周那个终端滚动的 bug"); return; }
+  askAbort?.abort(); askAbort = new AbortController();
+  const signal = askAbort.signal;
+  state.ai = { query, loading: true }; renderList();
+  try {
+    const r = await api("/api/ask", { query }, signal);
+    if (state.ai?.query !== query) return;
+    state.ai = { query, loading: false, ...r };
+    state.selected = r.results[0]?.id ?? state.selected;
+  } catch (e) {
+    if (e.name === "AbortError" || state.ai?.query !== query) return;
+    state.ai = { query, loading: false, error: e.message };
+  }
+  renderList(); renderPreview();
+}
+function exitAi() { askAbort?.abort(); state.ai = null; afterFilter(); }
+function renderList() {
+  if (!state.loaded) return;
+  if (state.ai) { $("list").innerHTML = (state.error ? `<div class="banner" style="background:color-mix(in srgb, var(--warn) 18%, transparent)">${esc(state.error)}</div>` : "") + aiList(); return; }
+  const list = visible(), pq = parseQuery(state.q), gs = groups(list);
+  const showProj = !["project", "bucket"].includes(state.scope.kind);
+  let h = "";
+  if (state.error) h += `<div class="banner" style="background:color-mix(in srgb, var(--warn) 18%, transparent)">${esc(state.error)}</div>`;
+  h += `<div class="list-head"><h2>${esc(state.q ? "搜索结果" : scopeTitle())}</h2><span class="sub">${list.length} 个会话</span>
+    ${pq.labels.length ? `<div class="chips">${pq.labels.map(l => `<span class="chip">${esc(l)}</span>`).join("")}</div>` : ""}</div>`;
+  if (!state.sessions.length) h += `<div class="empty">还没有会话<br><span style="font-size:12.5px">在 pi 里聊几句之后，会话会出现在这里</span></div>`;
+  else if (!list.length) h += `<div class="empty">没有找到会话<br><span style="font-size:12.5px">试试更短的关键词，或去掉 @项目 / 时间条件</span></div>`;
+  for (const g of gs) {
+    const col = state.collapsed.has(g.key);
+    h += `<div class="group"><button class="group-title" data-group="${esc(g.key)}"><span class="caret${col ? "" : " open"}">▸</span>${esc(g.label)}<span class="num">${g.items.length}</span><span class="line"></span></button>`;
+    if (!col) for (const s of g.items) h += card(s, pq, showProj);
+    h += `</div>`;
+  }
+  $("list").innerHTML = h;
+}
+async function loadDetail(s) {
+  const key = s.id + "@" + s.modified;
+  if (state.details.has(key)) return;
+  state.details.set(key, null);
+  try { state.details.set(key, (await api("/api/session?id=" + encodeURIComponent(s.id))).messages); }
+  catch (e) { state.details.set(key, [{ role: "assistant", text: "读取失败：" + e.message }]); }
+  if (state.selected === s.id) renderPreview();
+}
+function renderPreview() {
+  const s = state.sessions.find(x => x.id === state.selected);
+  if (!s) { $("preview").innerHTML = state.loaded ? `<div class="empty">选择一个会话查看摘要和内容</div>` : ""; $("app").classList.remove("detail"); return; }
+  const pq = parseQuery(state.q), msgs = state.details.get(s.id + "@" + s.modified);
+  if (msgs === undefined) void loadDetail(s);
+  const shown = (msgs || []).slice(0, 6), parent = s.parent && state.sessions.find(x => x.path === s.parent);
+  const organizing = state.organize.running;
+  $("preview").innerHTML = `<div class="pv">
+    <button class="btn back" data-act="back" style="margin-bottom:12px">← 返回列表</button>
+    <h1>${state.editing ? `<input id="rename" value="${esc(title(s))}" maxlength="80">` : highlight(title(s), pq.words)}${isCurrent(s) ? ` <span class="chip" style="font-size:12px">当前会话</span>` : ""}</h1>
+    <div class="raw-title">原始首句：${esc(s.firstUser || "（无）")}${s.meta.titleSource === "manual" ? " · 标题为手动命名" : s.meta.titleSource === "ai" ? " · 标题由 AI 生成" : ""}</div>
+    <div class="actions">
+      <button class="btn primary" data-act="open" ${isCurrent(s) ? "disabled style='opacity:.5;cursor:default'" : ""}>▶ 在 pi 中打开</button>
+      <button class="btn" data-act="copy">复制命令</button>
+      <button class="btn" data-act="rename">重命名</button>
+      <button class="btn" data-act="pin">${s.meta.pinned ? "取消置顶" : "置顶"}</button>
+      <button class="btn" data-act="archive">${s.meta.archived ? "取消归档" : "归档"}</button>
+      <button class="btn" data-act="organize" ${organizing ? "disabled style='opacity:.5'" : ""}>✨ ${s.meta.organizedAt ? "重新生成摘要" : "AI 生成标题"}</button>
+    </div>
+    ${s.meta.summary ? `<div class="summary-box"><div class="lbl">摘要</div>${highlight(s.meta.summary, pq.words)}</div>` : ""}
+    <dl class="facts">
+      <dt>项目</dt><dd>${esc(tilde(s.cwd) || "未知")}</dd>
+      <dt>最后活动</dt><dd class="num">${fmtFull(s.modified)}</dd>
+      <dt>创建时间</dt><dd class="num">${fmtFull(s.created)}</dd>
+      <dt>消息</dt><dd>${s.count} 条${s.model ? " · " + esc(s.model) : ""}</dd>
+      ${tags(s).length ? `<dt>标签</dt><dd>${tags(s).map(t => `<span class="tag">#${esc(t)}</span>`).join(" ")}</dd>` : ""}
+      ${parent ? `<dt>分叉自</dt><dd><button class="tag" data-goto="${esc(parent.id)}">${esc(title(parent))}</button></dd>` : ""}
+    </dl>
+    <h3>对话开头</h3>
+    ${msgs === undefined || msgs === null ? `<div class="hint">读取中…</div>` : !shown.length ? `<div class="hint">这个会话还没有文字消息</div>` :
+      shown.map(m => `<div class="msg ${m.role}"><div class="who">${m.role === "user" ? "你" : "AI"}</div><div class="body">${bold(highlight(m.text.length > 600 ? m.text.slice(0, 600) + "…" : m.text, pq.words))}</div></div>`).join("")}
+    ${s.count > shown.length && shown.length ? `<div class="more">共 ${s.count} 条消息，在 pi 中打开查看全部</div>` : ""}
+  </div>`;
+  if (state.editing) { const i = $("rename"); i.focus(); i.select(); }
+}
+function render() { renderHeader(); renderSide(); renderList(); renderPreview(); }
+function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("show"), 3200); }
+function select(id, reveal) {
+  state.selected = id; state.editing = false; renderList(); renderPreview();
+  if (reveal) $("app").classList.add("detail");
+  document.querySelector(`.card[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
+}
+
+// ---- 数据同步 ----
+let pollTimer;
+async function refresh() {
+  clearTimeout(pollTimer);
+  try {
+    const data = await api("/api/sessions");
+    const first = !state.loaded;
+    Object.assign(state, { sessions: data.sessions, current: data.current, model: data.model, organize: data.organize, loaded: true, error: data.connected ? "" : "pi 正在切换会话，稍后会自动恢复。" });
+    if (first) {
+      const cur = state.sessions.find(isCurrent) || state.sessions[0];
+      if (cur) state.openProjects.add(cur.cwd);
+      state.selected = cur?.id;
+    }
+    if (!state.editing) render(); else { renderHeader(); renderSide(); renderList(); }
+  } catch (e) {
+    state.error = e.status === 401 ? "页面令牌已失效：请在 pi 中运行 /sessions 重新打开。" : e.message;
+    state.loaded = true; renderList();
+  }
+  pollTimer = setTimeout(refresh, state.organize.running ? 1500 : document.hidden ? 20000 : 5000);
+}
+async function mutate(body, okMsg) {
+  try { const r = await api("/api/meta", body); const s = state.sessions.find(x => x.id === body.id); if (s) s.meta = r.meta; toast(r.warning || okMsg); render(); }
+  catch (e) { toast(e.message); }
+}
+async function organize(ids) {
+  if (!ids.length) return;
+  if (!confirm(`将用 pi 当前的模型${state.model ? "（" + state.model + "）" : ""}为 ${ids.length} 个会话生成标题、摘要和标签。\n每个会话一次模型请求，会产生额外用量。继续？`)) return;
+  try { state.organize = (await api("/api/organize", { ids })).organize; renderHeader(); refresh(); }
+  catch (e) { toast(e.message); }
+}
+async function act(a) {
+  const s = state.sessions.find(x => x.id === state.selected);
+  if (a === "back") { $("app").classList.remove("detail"); return; }
+  if (!s) return;
+  if (a === "open") {
+    if (isCurrent(s)) return toast("已经是当前会话");
+    try { const r = await api("/api/open", { id: s.id }); toast(r.message); if (r.ok) setTimeout(refresh, 1200); } catch (e) { toast(e.message); }
+  }
+  if (a === "copy") {
+    const cmd = `cd ${JSON.stringify(s.cwd)} && pi --session ${s.id}`;
+    try { await navigator.clipboard.writeText(cmd); toast("已复制：" + cmd); } catch { prompt("复制这条命令：", cmd); }
+  }
+  if (a === "rename") { state.editing = true; renderPreview(); }
+  if (a === "pin") mutate({ id: s.id, pinned: !s.meta.pinned }, s.meta.pinned ? "已取消置顶" : "已置顶");
+  if (a === "archive") mutate({ id: s.id, archived: !s.meta.archived }, s.meta.archived ? "已取消归档" : "已归档（默认列表中隐藏，可在「已归档」里找到）");
+  if (a === "organize") organize([s.id]);
+}
+
+// ---- 事件 ----
+for (const [id, key] of [["titleSeg", "titleMode"], ["timeSeg", "timeField"]])
+  $(id).addEventListener("click", e => { const v = e.target.closest("button")?.dataset.v; if (!v) return; state[key] = v; savePrefs(); render(); });
+$("organize").addEventListener("click", async () => {
+  if (state.organize.running) { try { state.organize = (await api("/api/organize/cancel", {})).organize; renderHeader(); toast("已取消剩余的整理"); } catch (e) { toast(e.message); } return; }
+  organize(state.sessions.filter(needsOrganize).sort((a, b) => b.modified.localeCompare(a.modified)).map(s => s.id));
+});
+$("side").addEventListener("click", e => {
+  const tag = e.target.closest("[data-tag]"); if (tag) { if (state.ai) { askAbort?.abort(); state.ai = null; } state.q = "#" + tag.dataset.tag; $("q").value = state.q; runSearch(); render(); return; }
+  const b = e.target.closest("[data-scope]"); if (!b) return;
+  const sc = JSON.parse(b.dataset.scope);
+  if (b.dataset.toggle) { const c = b.dataset.toggle; if (state.scope.kind === "project" && state.scope.cwd === c) { state.openProjects.has(c) ? state.openProjects.delete(c) : state.openProjects.add(c); } else state.openProjects.add(c); }
+  state.scope = sc; state.q = ""; $("q").value = ""; state.hits = null; if (state.ai) { askAbort?.abort(); state.ai = null; }
+  const v = visible(); if (!v.some(s => s.id === state.selected)) state.selected = v[0]?.id;
+  render();
+});
+$("ask").addEventListener("click", ask);
+$("list").addEventListener("click", e => {
+  const a = e.target.closest("[data-ai]"); if (a) { if (a.dataset.ai === "exit") exitAi(); else $("organize").click(); return; }
+  const g = e.target.closest("[data-group]"); if (g) { const k = g.dataset.group; state.collapsed.has(k) ? state.collapsed.delete(k) : state.collapsed.add(k); renderList(); return; }
+  const c = e.target.closest("[data-id]"); if (c) select(c.dataset.id, true);
+});
+$("list").addEventListener("dblclick", e => { if (e.target.closest("[data-id]")) act("open"); });
+$("preview").addEventListener("click", e => {
+  const g = e.target.closest("[data-goto]"); if (g) { select(g.dataset.goto); return; }
+  const b = e.target.closest("[data-act]"); if (b && !b.disabled) act(b.dataset.act);
+});
+$("preview").addEventListener("keydown", e => {
+  if (e.target.id !== "rename") return;
+  if (e.key === "Enter" && !e.isComposing) {
+    const v = e.target.value.trim(); state.editing = false;
+    if (v && v !== title(state.sessions.find(x => x.id === state.selected))) mutate({ id: state.selected, title: v }, "已重命名，pi 的 /resume 里也会显示新标题"); else renderPreview();
+  }
+  if (e.key === "Escape") { state.editing = false; renderPreview(); }
+});
+$("q").addEventListener("input", e => { state.q = e.target.value; if (state.ai) { askAbort?.abort(); state.ai = null; } runSearch(); });
+document.addEventListener("keydown", e => {
+  const typing = e.target.tagName === "INPUT";
+  if (e.key === "/" && !typing) { e.preventDefault(); $("q").focus(); return; }
+  if (e.key === "Enter" && e.shiftKey && e.target.id === "q" && !e.isComposing) { e.preventDefault(); ask(); return; }
+  if (e.key === "Escape" && state.ai) { exitAi(); return; }
+  if (e.key === "Escape" && e.target.id === "q") { if (state.q) { state.q = ""; e.target.value = ""; runSearch(); } else e.target.blur(); return; }
+  if (typing && e.target.id !== "q") return;
+  if (e.isComposing) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    const ids = [...document.querySelectorAll(".card[data-id]")].map(c => c.dataset.id); if (!ids.length) return;
+    e.preventDefault(); const i = ids.indexOf(state.selected), n = e.key === "ArrowDown" ? Math.min(ids.length - 1, i + 1) : Math.max(0, i - 1);
+    select(ids[i < 0 ? 0 : n]);
+  }
+  if (e.key === "Enter" && state.selected && !state.editing) act("open");
+});
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+refresh();
+</script>
+</body>
+</html>
