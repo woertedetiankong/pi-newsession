@@ -7,14 +7,19 @@
 需要 Node.js 22+ 和 pi 0.85.1 或更新版本。
 
 ```bash
-# 全局安装，所有项目都能用
-pi install /path/to/pi-sessions -g
+# 从 GitHub 安装（写入 ~/.pi/agent/settings.json，所有项目都能用）
+pi install git:github.com/woertedetiankong/pi-newsession
 
-# 或仅为这次会话加载
-pi -e /path/to/pi-sessions/index.ts
+# 或只装到当前项目（写入 .pi/settings.json）
+pi install git:github.com/woertedetiankong/pi-newsession -l
+
+# 或不安装，只在这次运行中试用
+pi -e git:github.com/woertedetiankong/pi-newsession
 ```
 
-在 pi 中输入 `/sessions`，浏览器会打开会话管理页面。
+安装后重启 pi，输入 `/sessions`，浏览器会打开会话管理页面。
+
+更新到最新版本：`pi update --extensions`。卸载：`pi remove git:github.com/woertedetiankong/pi-newsession`。
 
 | 命令 | 作用 |
 | --- | --- |
@@ -70,7 +75,10 @@ pi -e /path/to/pi-sessions/index.ts
 ## 开发
 
 ```bash
+git clone https://github.com/woertedetiankong/pi-newsession.git
+cd pi-newsession
 npm ci
+pi -e ./index.ts   # 加载本地源码；改动后重启 pi 生效
 npm run check   # 类型检查
 npm test        # 单元与集成测试
 ```
