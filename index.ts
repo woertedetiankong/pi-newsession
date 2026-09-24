@@ -1,8 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { constants, copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SessionsServer, type Binding } from "./src/server.ts";
@@ -10,6 +9,7 @@ import { appendSessionName } from "./src/rename.ts";
 import { MetaStore } from "./src/meta.ts";
 import { SessionScanner } from "./src/scan.ts";
 import { focusTerminal } from "./src/focus.ts";
+import { DataLocation, openPath } from "./src/storage.ts";
 
 const PREFERRED_PORT = 47291;
 // The server outlives a single extension runtime (session switches rebuild the runtime), so it lives on globalThis.
@@ -17,7 +17,24 @@ const shared = globalThis as typeof globalThis & { __piSessionsServer?: Sessions
 
 function paths() {
   const agent = getAgentDir(), data = join(agent, "pi-sessions");
-  return { root: join(agent, "sessions"), data, metaFile: join(data, "meta.json"), tokenFile: join(data, "token") };
+  // meta.json may move (page setting or PI_SESSIONS_DATA_DIR); the token and config.json always stay here, on this machine.
+  return { root: join(agent, "sessions"), data, location: new DataLocation(data), tokenFile: join(data, "token"), settingsFile: join(agent, "settings.json") };
+}
+let metaCopied: Promise<void> | undefined;
+/** PI_SESSIONS_DATA_DIR newly set: carry over the existing meta.json unless one is already there (e.g. synced from another machine). */
+function copyMetaOnce(): Promise<void> {
+  return metaCopied ??= (async () => {
+    const p = paths(), { dir, source } = await p.location.resolve();
+    if (source !== "env") return;
+    await mkdir(dir, { recursive: true });
+    await copyFile(join(p.data, "meta.json"), join(dir, "meta.json"), constants.COPYFILE_EXCL).catch(() => {});
+  })();
+}
+async function metaStore(): Promise<MetaStore> {
+  const server = shared.__piSessionsServer;
+  if (server) return server.currentMeta();
+  await copyMetaOnce();
+  return new MetaStore(join((await paths().location.resolve()).dir, "meta.json"));
 }
 async function loadToken(file: string, dir: string): Promise<string> {
   try { const t = (await readFile(file, "utf8")).trim(); if (/^[a-f0-9]{32,}$/.test(t)) return t; } catch {}
@@ -32,22 +49,18 @@ async function rememberSessionDir(ctx: ExtensionContext): Promise<void> {
   if (!dir) return;
   const p = paths(), target = resolve(dir), root = resolve(p.root);
   if (target === root || target.startsWith(root + sep)) return;
-  await (shared.__piSessionsServer?.meta ?? new MetaStore(p.metaFile)).addSessionDir(target);
+  await (await metaStore()).addSessionDir(target);
 }
 async function ownsSessionFile(path: string): Promise<boolean> {
   const server = shared.__piSessionsServer, p = paths();
-  const scanner = server?.scanner ?? new SessionScanner(async () => [p.root, ...(await new MetaStore(p.metaFile).sessionDirs())]);
+  const scanner = server?.scanner ?? new SessionScanner(async () => [p.root, ...(await (await metaStore()).sessionDirs())]);
   return scanner.owns(path);
-}
-function openBrowser(url: string): void {
-  const [cmd, args] = process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? ["cmd", ["/c", "start", "", url]] : ["xdg-open", [url]];
-  const child = execFile(cmd, args as string[], () => {});
-  child.unref();
 }
 
 export default function sessionsExtension(pi: ExtensionAPI): void {
   const bind = (ctx: ExtensionContext): Binding => ({
     currentSessionFile: () => ctx.sessionManager.getSessionFile(),
+    sessionDir: () => ctx.sessionManager.getSessionDir(),
     model: () => ctx,
     open: async path => {
       if (path === ctx.sessionManager.getSessionFile()) return { ok: true, message: "已经是当前会话" };
@@ -77,8 +90,10 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
     let server = shared.__piSessionsServer;
     if (!server) {
       const p = paths();
+      await copyMetaOnce();
       server = new SessionsServer({
-        root: p.root, metaFile: p.metaFile, token: await loadToken(p.tokenFile, p.data), port: PREFERRED_PORT,
+        root: p.root, metaFile: join((await p.location.resolve()).dir, "meta.json"), location: p.location, settingsFile: p.settingsFile,
+        token: await loadToken(p.tokenFile, p.data), port: PREFERRED_PORT,
         webFile: fileURLToPath(new URL("./web/index.html", import.meta.url)),
       });
       shared.__piSessionsServer = server;
@@ -116,7 +131,7 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
         }
         const url = await start(ctx);
         if (command === "url") { ctx.ui.notify(`会话管理地址（含访问令牌，勿分享）：${url}`, "info"); return; }
-        openBrowser(url);
+        openPath(url);
         ctx.ui.notify(`会话管理已在浏览器中打开：${url.replace(/#.*/, "")}（/sessions url 查看完整地址，/sessions stop 关闭）`, "info");
       } catch (e) {
         ctx.ui.notify(`会话管理出错：${(e as Error).message}`, "error");

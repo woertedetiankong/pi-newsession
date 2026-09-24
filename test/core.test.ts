@@ -13,6 +13,7 @@ import { SessionsServer, type Binding } from "../src/server.ts";
 import { askSessions, candidateLines, parseAsk } from "../src/ask.ts";
 import { activeBranch, buildTranscript, firstMatch, toolSummary } from "../src/transcript.ts";
 import { planFocus, runFocus, windowsScript } from "../src/focus.ts";
+import { DataLocation, expandDir } from "../src/storage.ts";
 
 async function temp(t: any): Promise<string> { const dir = await mkdtemp(join(tmpdir(), "pi-sessions-test-")); t.after(() => rm(dir, { recursive: true, force: true })); return dir; }
 export function sessionFile(id: string, cwd: string, messages: [string, string][], extra: object[] = []): string {
@@ -364,4 +365,71 @@ test("windows focus script targets the given pid and only uses the documented us
   assert.match(s, /\$id = 1234;/);
   for (const fn of ["SetForegroundWindow", "ShowWindow", "IsIconic", "keybd_event", "GetConsoleWindow"]) assert.ok(s.includes(fn), fn);
   assert.equal(Buffer.from(Buffer.from(s, "utf16le").toString("base64"), "base64").toString("utf16le"), s, "round-trips through -EncodedCommand");
+});
+
+test("data location: env beats the page setting, which beats the default", async t => {
+  const dir = await temp(t), env: NodeJS.ProcessEnv = {}, loc = new DataLocation(join(dir, "pi-sessions"), env);
+  assert.deepEqual(await loc.resolve(), { dir: join(dir, "pi-sessions"), source: "default" });
+  await loc.set(join(dir, "sync"));
+  assert.deepEqual(await loc.resolve(), { dir: join(dir, "sync"), source: "config" });
+  env.PI_SESSIONS_DATA_DIR = "~/env-dir";
+  assert.deepEqual(await loc.resolve(), { dir: join(homedir(), "env-dir"), source: "env" });
+  env.PI_SESSIONS_DATA_DIR = "relative/dir";
+  await assert.rejects(loc.resolve(), /PI_SESSIONS_DATA_DIR 需要完整路径/);
+  delete env.PI_SESSIONS_DATA_DIR;
+  await loc.set(undefined);
+  assert.equal((await loc.resolve()).source, "default");
+  await writeFile(loc.configFile, '{"dataDir":"not/absolute"}');
+  assert.equal((await loc.resolve()).source, "default", "a bad setting falls back instead of breaking the page");
+  assert.throws(() => expandDir("  "), /完整路径/);
+});
+
+test("server storage: lists locations and moves plugin data with a merge", async t => {
+  const root = await temp(t), sessions = join(root, "sessions"), custom = join(root, "proj", ".pi", "sessions"), home = join(root, "pi-sessions");
+  await mkdir(join(sessions, "--w--"), { recursive: true }); await mkdir(custom, { recursive: true });
+  await writeFile(join(sessions, "--w--", "a.jsonl"), sessionFile("a", "/w", [["user", "hi"]]));
+  await writeFile(join(custom, "b.jsonl"), sessionFile("b", "/proj", [["user", "flat"]]));
+  await writeFile(join(root, "index.html"), "");
+  const env: NodeJS.ProcessEnv = {}, location = new DataLocation(home, env), token = "d".repeat(32);
+  const make = () => new SessionsServer({ root: sessions, metaFile: join(home, "meta.json"), location, settingsFile: join(root, "settings.json"), webFile: join(root, "index.html"), token });
+  const server = make(), other = make();
+  server.binding = { currentSessionFile: () => undefined, sessionDir: () => join(sessions, "--w--"), model: () => undefined, open: async () => ({ ok: true, message: "" }), rename: async () => {} };
+  const base = (await server.start()).replace(/\/#.*/, "");
+  t.after(() => server.close());
+  const call = (path: string, body?: object) => fetch(base + path, body ? { method: "POST", headers: { "x-token": token, "content-type": "application/json" }, body: JSON.stringify(body) } : { headers: { "x-token": token } });
+
+  await server.meta.addSessionDir(custom);
+  await server.meta.patch("a", { title: "当前标题", pinned: true });
+  let st = await (await call("/api/storage")).json();
+  assert.deepEqual(st.sessions.dirs.map((d: any) => [d.path, d.isDefault, d.current, d.count]), [[sessions, true, true, 1], [custom, false, false, 1]]);
+  assert.deepEqual(st.data, { dir: home, source: "default", defaultDir: home, movable: true });
+
+  // The new folder already holds data (e.g. synced from another machine): both survive, the data in use wins on conflicts.
+  const sync = join(root, "Dropbox", "pi");
+  await new MetaStore(join(sync, "meta.json")).patch("a", { title: "旧的同步标题" });
+  await new MetaStore(join(sync, "meta.json")).patch("z", { archived: true });
+  assert.equal((await call("/api/storage/data", { dir: "relative" })).status, 400);
+  await writeFile(join(root, "a-file"), "");
+  assert.equal((await call("/api/storage/data", { dir: join(root, "a-file", "sub") })).status, 400, "unwritable target is refused");
+  st = await (await call("/api/storage/data", { dir: sync })).json();
+  assert.deepEqual(st.data.source, "config"); assert.equal(st.data.dir, sync);
+  const moved = JSON.parse(await readFile(join(sync, "meta.json"), "utf8"));
+  assert.equal(moved.sessions.a.title, "当前标题"); assert.equal(moved.sessions.z.archived, true); assert.deepEqual(moved.sessionDirs, [custom]);
+  assert.equal(JSON.parse(await readFile(join(home, "meta.json"), "utf8")).sessions.a.title, "当前标题", "old file is left in place");
+
+  // Writes after the move go to the new folder, and another pi window follows the change.
+  await call("/api/meta", { id: "b", pinned: true });
+  assert.equal((await new MetaStore(join(sync, "meta.json")).get("b")).pinned, true);
+  assert.equal((await (await other.currentMeta()).get("b")).pinned, true);
+
+  // Back to the default folder: the stale copy there is refreshed from the data in use.
+  await call("/api/meta", { id: "a", title: "改过的标题" });
+  st = await (await call("/api/storage/data", {})).json();
+  assert.equal(st.data.source, "default");
+  assert.equal((await new MetaStore(join(home, "meta.json")).get("a")).title, "改过的标题");
+
+  assert.equal((await call("/api/storage/open", { path: "/etc" })).status, 400, "only listed folders can be opened");
+  env.PI_SESSIONS_DATA_DIR = sync;
+  assert.equal((await call("/api/storage/data", { dir: join(root, "x") })).status, 409, "env var locks the location");
+  assert.equal((await (await call("/api/storage")).json()).data.source, "env");
 });

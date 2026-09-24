@@ -90,6 +90,15 @@ export class MetaStore {
     await this.write(data => { if (!data.sessionDirs.includes(dir)) data.sessionDirs.push(dir); });
   }
 
+  /** Brings another store's data in when the data dir moves; the incoming entry wins for a session both have. */
+  async mergeFrom(other: MetaStore): Promise<void> {
+    const [sessions, dirs] = [await other.all(), await other.sessionDirs()];
+    await this.write(data => {
+      Object.assign(data.sessions, sessions);
+      for (const d of dirs) if (!data.sessionDirs.includes(d)) data.sessionDirs.push(d);
+    });
+  }
+
   private async update(id: string, change: (cur: SessionMeta) => SessionMeta): Promise<SessionMeta> {
     let result: SessionMeta = {};
     await this.write(data => {

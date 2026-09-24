@@ -50,6 +50,8 @@ header { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; pad
 .search svg { position: absolute; left: 11px; top: 10px; color: var(--faint); }
 .search kbd { position: absolute; right: 10px; top: 8px; }
 kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; }
+.ai-model { height: 32px; max-width: 190px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--panel); color: var(--muted); font: inherit; font-size: 12.5px; padding: 0 6px; margin-left: -8px; cursor: pointer; }
+.ai-model:focus { outline: none; border-color: var(--accent); }
 .seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 8px; overflow: hidden; }
 .seg button { padding: 5px 10px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
 .seg button + button { border-left: 1px solid var(--line-strong); }
@@ -173,6 +175,37 @@ section.preview { overflow-y: auto; background: var(--panel); }
 .toast.show { opacity: 1; transform: translateX(-50%); }
 .banner { font-size: 12px; color: var(--muted); background: var(--accent-soft); padding: 6px 20px; }
 
+dialog.dlg { width: min(620px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); color: var(--text); box-shadow: 0 16px 48px rgba(0,0,0,.25); }
+dialog.dlg::backdrop { background: rgba(0,0,0,.35); }
+.dlg-head { display: flex; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.dlg-head h2 { margin: 0; font-size: 16px; flex: 1; }
+.dlg-head button { width: 28px; height: 28px; border-radius: 6px; color: var(--muted); }
+.dlg-head button:hover { background: var(--bg); }
+.dlg section { padding: 14px 18px 16px; }
+.dlg section + section { border-top: 1px solid var(--line); }
+.dlg h3 { margin: 0 0 8px; font-size: 14px; }
+.dlg h3 .sub { font-weight: 400; font-size: 12.5px; color: var(--muted); margin-left: 6px; }
+.loc { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; }
+.loc > div { flex: 1; min-width: 0; }
+.loc .path { font: 12.5px var(--mono); overflow-wrap: anywhere; }
+.loc .loc-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.loc .loc-meta b { color: var(--accent-text); font-weight: 600; }
+.loc .btn { height: 28px; font-size: 12.5px; flex: none; }
+.dlg .how { margin-top: 10px; font-size: 13px; color: var(--muted); }
+.dlg .how summary { cursor: pointer; color: var(--accent-text); }
+.dlg .how p { margin: 8px 0; }
+.dlg code, .dlg pre { font: 12.5px var(--mono); background: var(--bg); border-radius: 5px; }
+.dlg code { padding: 1px 5px; }
+.dlg pre { display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.dlg pre span { flex: 1; }
+.dlg pre button { color: var(--accent-text); font-size: 12px; flex: none; }
+.move { display: flex; gap: 8px; margin-top: 10px; }
+.move input { flex: 1; min-width: 0; height: 32px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--bg); color: var(--text); padding: 0 10px; font: 12.5px var(--mono); outline: none; }
+.move input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.dlg .fine { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+.dlg .fine button { color: var(--accent-text); text-decoration: underline; font-size: 12px; }
+.dlg .err { color: #d4453b; font-size: 12.5px; margin: 8px 0 0; }
+
 .back { display: none; }
 @media (max-width: 1080px) {
   .app { grid-template-columns: 210px minmax(0, 1fr); }
@@ -182,7 +215,7 @@ section.preview { overflow-y: auto; background: var(--panel); }
   .hint { display: none; }
 }
 @media (max-width: 720px) {
-  #ask { order: 4; }
+  #ask, #aiModel { order: 4; }
   .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto 1fr; height: auto; min-height: 100vh; }
   .seg button { padding: 5px 8px; }
   .card .summary { white-space: normal; }
@@ -204,7 +237,8 @@ section.preview { overflow-y: auto; background: var(--panel); }
       <input id="q" placeholder="搜索内容，或 @项目 #标签 上周 8月" autocomplete="off">
       <kbd>/</kbd>
     </label>
-    <button class="btn" id="ask" title="用 pi 当前的模型理解你的描述，在所有会话的标题和摘要中查找。会把你的描述和会话的标题、摘要、首句发送给模型服务商，每次 1 次模型请求。快捷键 Shift+Enter">✨ 用 AI 找</button>
+    <button class="btn" id="ask" title="用右侧选择的模型（默认跟随 pi）理解你的描述，在所有会话的标题和摘要中查找。会把你的描述和会话的标题、摘要、首句发送给该模型的服务商，每次 1 次模型请求。快捷键 Shift+Enter">✨ 用 AI 找</button>
+    <select class="ai-model" id="aiModel" title="「用 AI 找」和「AI 整理」使用的模型（只列出 pi 中已配置登录或 API Key 的模型）"><option value="">跟随 pi 当前模型</option></select>
     <div class="spacer"></div>
     <button class="btn" id="organize" hidden></button>
     <div class="seg" id="titleSeg" title="标题">
@@ -219,6 +253,7 @@ section.preview { overflow-y: auto; background: var(--panel); }
   <section class="preview" id="preview"></section>
 </div>
 <div class="toast" id="toast"></div>
+<dialog class="dlg" id="storage"></dialog>
 
 <script>
 const TOKEN = (() => {
@@ -232,9 +267,10 @@ const state = {
   titleMode: "ai", timeField: "modified", q: "", hits: null,
   scope: { kind: "all" }, openProjects: new Set(), selected: null, collapsed: new Set(["零碎"]),
   editing: false, tx: new Map(), pvKey: null, loaded: false, ai: null,
+  aiModel: "", models: [],
 };
-try { const p = JSON.parse(localStorage.getItem("pi-sessions-prefs") || "{}"); if (p.titleMode) state.titleMode = p.titleMode; if (p.timeField) state.timeField = p.timeField; } catch {}
-const savePrefs = () => { try { localStorage.setItem("pi-sessions-prefs", JSON.stringify({ titleMode: state.titleMode, timeField: state.timeField })); } catch {} };
+try { const p = JSON.parse(localStorage.getItem("pi-sessions-prefs") || "{}"); if (p.titleMode) state.titleMode = p.titleMode; if (p.timeField) state.timeField = p.timeField; if (p.aiModel) state.aiModel = p.aiModel; } catch {}
+const savePrefs = () => { try { localStorage.setItem("pi-sessions-prefs", JSON.stringify({ titleMode: state.titleMode, timeField: state.timeField, aiModel: state.aiModel })); } catch {} };
 
 // ---- API ----
 async function api(path, body, signal, etag) {
@@ -367,7 +403,7 @@ function renderHeader() {
   b.hidden = !o.running && !pending;
   b.classList.toggle("primary", !o.running);
   b.textContent = o.running ? `整理中 ${o.done + o.failed}/${o.total} · 取消` : `✨ AI 整理 ${pending} 个会话`;
-  b.title = o.running ? "点击取消剩余的整理" : "用 pi 当前的模型为未整理的会话生成标题、摘要和标签";
+  b.title = o.running ? "点击取消剩余的整理" : `用 ${aiModelName()} 为未整理的会话生成标题、摘要和标签`;
 }
 function renderSide() {
   const list = state.sessions, live = list.filter(s => !s.meta.archived);
@@ -397,6 +433,7 @@ function renderSide() {
   if (tagCount.size) h += `<div class="nav-label">标签</div><div style="display:flex;flex-wrap:wrap;gap:6px;padding:4px 10px">` +
     [...tagCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 16).map(([t, n]) => `<button class="chip" data-tag="${esc(t)}">#${esc(t)} <span class="num" style="font-size:11px;opacity:.7">${n}</span></button>`).join("") + `</div>`;
   h += `<div class="nav-label">其他</div><button class="nav${on("archived")}" data-scope="${scope({ kind: "archived" })}"><span class="ico">🗄</span><span class="name">已归档</span><span class="cnt">${list.filter(s => s.meta.archived).length}</span></button>`;
+  h += `<button class="nav" data-storage><span class="ico">📁</span><span class="name">存储位置</span></button>`;
   $("side").innerHTML = h;
 }
 function scopeTitle() {
@@ -425,7 +462,7 @@ function aiList() {
   let h = `<div class="list-head"><h2>✨ AI 搜索</h2><span class="sub">${ai.loading ? "" : items.length + " 个相关会话"}</span>
     <button class="btn" data-ai="exit" style="margin-left:auto;height:26px;font-size:12px">✕ 退出 AI 搜索</button>
     <div class="chips"><span class="chip">${esc(ai.query)}</span></div>
-    <div class="ai-status">${ai.loading ? `<span class="spin"></span>正在用 ${esc(state.model || "当前模型")} 理解你的描述…` :
+    <div class="ai-status">${ai.loading ? `<span class="spin"></span>正在用 ${esc(aiModelName())} 理解你的描述…` :
       ai.error ? "" : `由 ${esc(ai.model)} 按相关度排序 · 看了 ${ai.candidates} 个会话${ai.usage ? ` · 约 ${(ai.usage.input + ai.usage.output).toLocaleString()} tokens` : ""}`}
     ${!ai.loading && ai.unorganized ? `<br>其中 ${ai.unorganized} 个会话还没有摘要，只能根据标题和首句判断。<button data-ai="organize">先 AI 整理</button>结果会更准。` : ""}</div></div>`;
   if (ai.error) h += `<div class="empty">${esc(ai.error)}</div>`;
@@ -441,7 +478,7 @@ async function ask() {
   const signal = askAbort.signal;
   state.ai = { query, loading: true }; renderList();
   try {
-    const r = await api("/api/ask", { query }, signal);
+    const r = await api("/api/ask", { query, model: state.aiModel || undefined }, signal);
     if (state.ai?.query !== query) return;
     state.ai = { query, loading: false, ...r };
     state.selected = r.results[0]?.id ?? state.selected;
@@ -451,6 +488,77 @@ async function ask() {
   }
   renderList(); renderPreview();
 }
+function aiModelName() {
+  return state.aiModel ? state.models.find(m => m.key === state.aiModel)?.name || state.aiModel : state.model || "当前模型";
+}
+async function loadModels() {
+  try { const r = await api("/api/models"); if (!r?.models) return; state.models = r.models; } catch { return; }
+  // A remembered model that pi no longer offers falls back to following pi.
+  if (state.aiModel && !state.models.some(m => m.key === state.aiModel)) { state.aiModel = ""; savePrefs(); }
+  renderAskModel();
+}
+function renderAskModel() {
+  const sel = $("aiModel");
+  if (sel === document.activeElement) return;
+  const opt = (v, label) => `<option value="${esc(v)}"${v === state.aiModel ? " selected" : ""}>${esc(label)}</option>`;
+  const multi = new Set(state.models.map(m => m.provider)).size > 1;
+  sel.innerHTML = opt("", `跟随 pi${state.model ? "（" + state.model + "）" : "当前模型"}`) + state.models.map(m => opt(m.key, multi ? `${m.name} · ${m.provider}` : m.name)).join("");
+}
+// ---- Storage locations ----
+const SESSION_DIR_EXAMPLE = '{ "sessionDir": "~/Documents/pi-sessions" }';
+async function openStorage() {
+  const d = $("storage");
+  state.storage = null; renderStorage();
+  if (!d.open) d.showModal();
+  try { state.storage = await api("/api/storage"); } catch (e) { state.storage = { error: e.message }; }
+  renderStorage();
+}
+function renderStorage(error = "") {
+  const st = state.storage, head = `<div class="dlg-head"><h2>存储位置</h2><button data-st="close" title="关闭 (Esc)">✕</button></div>`;
+  if (!st) { $("storage").innerHTML = head + `<div class="empty">正在读取…</div>`; return; }
+  if (st.error) { $("storage").innerHTML = head + `<div class="empty">${esc(st.error)}</div>`; return; }
+  const openBtn = (p, ok = true) => ok ? `<button class="btn" data-st="open" data-path="${esc(p)}" title="在文件管理器中打开">打开</button>` : "";
+  const dirs = st.sessions.dirs.map(d => `<div class="loc"><div><div class="path">${esc(tilde(d.path))}</div>
+    <div class="loc-meta">${[d.isDefault ? "默认位置" : "自定义位置", d.current ? "<b>pi 正在使用</b>" : "", d.exists ? `${d.count} 个会话` : "目录不存在"].filter(Boolean).join(" · ")}</div></div>${openBtn(d.path, d.exists)}</div>`).join("");
+  const data = st.data, where = { default: "默认位置", config: "自定义位置", env: "由环境变量 PI_SESSIONS_DATA_DIR 指定" }[data.source];
+  let move = "";
+  if (data.source === "env") move = `<p class="fine">要在这里修改，请先去掉环境变量 <code>PI_SESSIONS_DATA_DIR</code> 并重启 pi。</p>`;
+  else if (data.movable) move = `<form class="move" id="moveForm"><input id="moveDir" placeholder="新位置，例如 ~/Dropbox/pi-sessions" autocomplete="off" spellcheck="false"><button class="btn primary">移到这里</button></form>
+    ${error ? `<p class="err">${esc(error)}</p>` : ""}
+    <p class="fine">现有数据会合并到新位置（那里已有的数据会保留），立即生效，不用重启 pi。原位置的文件会留着，确认没问题后可以自己删掉。访问令牌始终留在本机，不会移动。${data.source === "config" ? ` <button data-st="reset">恢复默认位置</button>` : ""}</p>`;
+  $("storage").innerHTML = head + `
+    <section><h3>对话文件<span class="sub">由 pi 保存，插件只读取</span></h3>${dirs}
+      <details class="how"><summary>怎么换位置</summary>
+        <p>在 pi 的设置文件 <code>${esc(tilde(st.sessions.settingsFile || "~/.pi/agent/settings.json"))}</code> 里加入这一项（目录换成你想要的）：</p>
+        <pre><span>${esc(SESSION_DIR_EXAMPLE)}</span><button data-st="copy">复制</button></pre>
+        <p>保存后重启 pi 生效，新目录会自动出现在上面的列表里。已有的对话不会自动搬过去，需要的话把旧目录里的内容手动移过去。也可以用启动参数 <code>pi --session-dir &lt;目录&gt;</code> 临时指定。</p>
+      </details></section>
+    <section><h3>插件数据<span class="sub">AI 标题、摘要、标签、置顶、归档</span></h3>
+      <div class="loc"><div><div class="path">${esc(tilde(data.dir))}</div><div class="loc-meta">${where}</div></div>${openBtn(data.dir)}</div>${move}</section>`;
+}
+async function moveData(dir) {
+  const label = dir || tilde(state.storage.data.defaultDir);
+  if (!confirm(`把插件数据移到 ${label}？\n\n· 现有的标题、摘要、标签等会合并过去，立即生效\n· 原位置的文件会保留`)) return;
+  try {
+    state.storage = await api("/api/storage/data", { dir });
+    renderStorage(); toast("插件数据已移到 " + tilde(state.storage.data.dir)); refresh();
+  } catch (e) { renderStorage(e.message); if (dir) $("moveDir").value = dir; }
+}
+$("storage").addEventListener("click", async e => {
+  if (e.target === $("storage")) { $("storage").close(); return; } // backdrop
+  const b = e.target.closest("[data-st]"); if (!b) return;
+  const a = b.dataset.st;
+  if (a === "close") $("storage").close();
+  if (a === "open") { try { await api("/api/storage/open", { path: b.dataset.path }); } catch (err) { toast(err.message); } }
+  if (a === "copy") { try { await navigator.clipboard.writeText(SESSION_DIR_EXAMPLE); toast("已复制"); } catch { prompt("复制这一项：", SESSION_DIR_EXAMPLE); } }
+  if (a === "reset") moveData("");
+});
+$("storage").addEventListener("submit", e => {
+  e.preventDefault();
+  const dir = $("moveDir").value.trim();
+  if (!dir) { $("moveDir").focus(); return; }
+  moveData(dir);
+});
 function exitAi() { askAbort?.abort(); state.ai = null; afterFilter(); }
 function renderList() {
   if (!state.loaded) return;
@@ -674,6 +782,7 @@ async function refresh() {
       state.selected = cur?.id;
     }
     if (!state.editing) render(); else { renderHeader(); renderSide(); renderList(); }
+    if (first) loadModels(); else renderAskModel();
   } catch (e) {
     state.error = e.status === 401 ? "页面令牌已失效：请在 pi 中运行 /sessions 重新打开。" : e.message;
     state.loaded = true; renderList();
@@ -686,8 +795,8 @@ async function mutate(body, okMsg) {
 }
 async function organize(ids) {
   if (!ids.length) return;
-  if (!confirm(`将用 pi 当前的模型${state.model ? "（" + state.model + "）" : ""}为 ${ids.length} 个会话生成标题、摘要和标签。\n\n· 每个会话的开头部分会发送给该模型的服务商\n· 每个会话一次模型请求，会产生额外用量\n\n继续？`)) return;
-  try { state.organize = (await api("/api/organize", { ids })).organize; renderHeader(); refresh(); }
+  if (!confirm(`将用 ${aiModelName()} 为 ${ids.length} 个会话生成标题、摘要和标签。\n\n· 每个会话的开头部分会发送给该模型的服务商\n· 每个会话一次模型请求，会产生额外用量\n\n继续？`)) return;
+  try { state.organize = (await api("/api/organize", { ids, model: state.aiModel || undefined })).organize; renderHeader(); refresh(); }
   catch (e) { toast(e.message); }
 }
 async function act(a) {
@@ -719,6 +828,7 @@ $("organize").addEventListener("click", async () => {
 });
 $("side").addEventListener("click", e => {
   const tag = e.target.closest("[data-tag]"); if (tag) { if (state.ai) { askAbort?.abort(); state.ai = null; } state.q = "#" + tag.dataset.tag; $("q").value = state.q; runSearch(); render(); return; }
+  if (e.target.closest("[data-storage]")) { openStorage(); return; }
   const b = e.target.closest("[data-scope]"); if (!b) return;
   const sc = JSON.parse(b.dataset.scope);
   if (b.dataset.toggle) { const c = b.dataset.toggle; if (state.scope.kind === "project" && state.scope.cwd === c) { state.openProjects.has(c) ? state.openProjects.delete(c) : state.openProjects.add(c); } else state.openProjects.add(c); }
@@ -727,6 +837,7 @@ $("side").addEventListener("click", e => {
   render();
 });
 $("ask").addEventListener("click", ask);
+$("aiModel").addEventListener("change", e => { state.aiModel = e.target.value; savePrefs(); renderHeader(); });
 $("list").addEventListener("click", e => {
   const a = e.target.closest("[data-ai]"); if (a) { if (a.dataset.ai === "exit") exitAi(); else $("organize").click(); return; }
   const g = e.target.closest("[data-group]"); if (g) { const k = g.dataset.group; state.collapsed.has(k) ? state.collapsed.delete(k) : state.collapsed.add(k); renderList(); return; }
@@ -747,6 +858,7 @@ $("preview").addEventListener("keydown", e => {
 });
 $("q").addEventListener("input", e => { state.q = e.target.value; if (state.ai) { askAbort?.abort(); state.ai = null; } runSearch(); });
 document.addEventListener("keydown", e => {
+  if ($("storage").open) return;
   const typing = e.target.tagName === "INPUT";
   if (e.key === "/" && !typing) { e.preventDefault(); $("q").focus(); return; }
   if (e.key === "Enter" && e.shiftKey && e.target.id === "q" && !e.isComposing) { e.preventDefault(); ask(); return; }
@@ -762,7 +874,8 @@ document.addEventListener("keydown", e => {
   }
   if (e.key === "Enter" && state.selected && !state.editing) act("open");
 });
-document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+// Also pick up models configured in pi (/login, models.json) while the page was in the background.
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { refresh(); loadModels(); } });
 refresh();
 </script>
 </body>
