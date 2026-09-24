@@ -11,7 +11,7 @@ export interface SessionRecord {
   text: string;
 }
 
-const PREVIEW_MESSAGES = 10, PREVIEW_CHARS = 1200, TEXT_CAP = 400_000;
+const PREVIEW_MESSAGES = 10, PREVIEW_CHARS = 1200, TEXT_CAP = 100_000;
 
 function textOf(content: unknown): string {
   if (typeof content === "string") return content;

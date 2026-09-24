@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile, appendFile, utimes } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { request } from "node:http";
@@ -142,8 +142,18 @@ test("server serves the page, guards the API and routes actions to the binding",
   assert.equal(list.current, join(dir, "b.jsonl")); assert.equal(list.model, "m");
   assert.deepEqual(list.sessions.map((s: any) => s.id).sort(), ["a", "b"]);
   assert.equal(list.sessions[0].text, undefined, "full text is not shipped to the page");
+  assert.equal(list.home, homedir());
+  const first = await call("/api/sessions"), etag = first.headers.get("etag")!;
+  assert.ok(etag);
+  const again = await fetch(base + "/api/sessions", { headers: { "x-token": "f".repeat(32), "if-none-match": etag } });
+  assert.equal(again.status, 304, "unchanged list is not re-sent");
+  await appendFile(path, JSON.stringify({ type: "message", id: "late", parentId: "e1", timestamp: "2026-09-09T00:00:00.000Z", message: { role: "user", content: "新消息" } }) + "\n");
+  await utimes(path, new Date(), new Date(Date.now() + 5000));
+  const changed = await fetch(base + "/api/sessions", { headers: { "x-token": "f".repeat(32), "if-none-match": etag } });
+  assert.equal(changed.status, 200, "a changed session invalidates the etag");
+  assert.notEqual(changed.headers.get("etag"), etag);
   assert.deepEqual((await (await call("/api/search?q=缓存")).json()).hits.map((h: any) => h.id), ["a"]);
-  assert.equal((await (await call("/api/session?id=a")).json()).messages.length, 2);
+  assert.equal((await (await call("/api/session?id=a")).json()).messages.length, 3, "includes the message appended above");
   assert.equal((await call("/api/session?id=zzz")).status, 404);
 
   const meta = await (await call("/api/meta", { id: "a", title: "缓存方案", pinned: true })).json();
@@ -252,4 +262,23 @@ test("meta store: two pi processes editing at once keep both changes", async t =
   await writeFile(file + ".lock", ""); await utimes(file + ".lock", new Date(0), new Date(0));
   await a.patch("z", { pinned: true });
   assert.equal((await b.get("z")).pinned, true, "a stale lock from a crashed process is taken over");
+});
+
+test("search text is capped per session to bound memory", () => {
+  const big = "x".repeat(60_000);
+  const r = parseSession("/x", sessionFile("s", "/w", [["user", big], ["assistant", big], ["user", big]]), new Date(0))!;
+  assert.ok(r.text.length <= 100_000);
+});
+
+test("page path helpers handle macOS, Linux and Windows home dirs", async () => {
+  const html = await readFile(new URL("../web/index.html", import.meta.url), "utf8");
+  const code = html.split("\n").filter(l => /^(const norm|function projName|function tilde)/.test(l)).join("\n");
+  const make = (home: string) => new Function("state", code + "\nreturn { projName, tilde };")({ home }) as { projName(p: string): string; tilde(p: string): string };
+  const mac = make("/Users/alex");
+  assert.equal(mac.projName("/Users/alex"), "~ (home)"); assert.equal(mac.projName("/Users/alex/code/blog"), "blog");
+  assert.equal(mac.tilde("/Users/alex/code/blog"), "~/code/blog"); assert.equal(mac.tilde("/Users/alexander/x"), "/Users/alexander/x");
+  const win = make("C:\\Users\\Alex");
+  assert.equal(win.projName("c:\\users\\alex\\"), "~ (home)"); assert.equal(win.projName("C:\\Users\\Alex\\code\\blog"), "blog");
+  assert.equal(win.tilde("C:\\Users\\Alex\\code"), "~\\code");
+  assert.equal(make("").projName("/home/bob"), "bob");
 });

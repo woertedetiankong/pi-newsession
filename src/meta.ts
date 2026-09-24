@@ -112,13 +112,25 @@ export class MetaStore {
         change(data);
         const tmp = `${this.file}.${process.pid}.tmp`;
         await writeFile(tmp, JSON.stringify({ version: 1, sessions: data.sessions, sessionDirs: data.sessionDirs }, null, 1), { mode: 0o600 });
-        await rename(tmp, this.file);
+        await renameRetry(tmp, this.file);
         const s = await stat(this.file);
         this.version = `${s.mtimeMs}:${s.size}`;
       } finally { await release(); }
     });
     this.queue = run;
     return run;
+  }
+}
+
+/** Windows refuses to replace a file another process is reading (EPERM/EBUSY); retry briefly. */
+async function renameRetry(from: string, to: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try { await rename(from, to); return; }
+    catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (attempt >= 20 || (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES")) { await rm(from, { force: true }); throw e; }
+      await delay(25);
+    }
   }
 }
 

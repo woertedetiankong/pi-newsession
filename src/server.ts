@@ -1,5 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { homedir } from "node:os";
 import type { AddressInfo } from "node:net";
 import { SessionScanner, searchSnippet, type SessionRecord } from "./scan.ts";
 import { MetaStore, type MetaPatch } from "./meta.ts";
@@ -91,7 +93,16 @@ export class SessionsServer {
       // Cancel model work when the page goes away mid-request.
       const aborter = new AbortController();
       res.on("close", () => { if (!res.writableFinished) aborter.abort(); });
-      json(res, 200, await this.route(req.method ?? "GET", url, body, aborter.signal));
+      const data = await this.route(req.method ?? "GET", url, body, aborter.signal);
+      if (req.method === "GET") {
+        // The page polls; answer 304 when nothing changed so it neither re-downloads nor re-renders.
+        const text = JSON.stringify(data), etag = `"${createHash("sha1").update(text).digest("base64url")}"`;
+        if (req.headers["if-none-match"] === etag) { res.writeHead(304, { etag, "cache-control": "no-store" }); res.end(); return; }
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", etag });
+        res.end(text);
+        return;
+      }
+      json(res, 200, data);
     } catch (e) {
       const status = e instanceof HttpError ? e.status : 500;
       json(res, status, { error: (e as Error).message });
@@ -104,6 +115,7 @@ export class SessionsServer {
       const [records, meta] = await Promise.all([this.refresh(), this.meta.all()]);
       return {
         current: this.binding?.currentSessionFile(),
+        home: homedir(),
         model: this.binding?.model()?.model?.id,
         connected: !!this.binding,
         organize: this.organizer.status,

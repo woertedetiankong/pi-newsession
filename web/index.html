@@ -159,7 +159,7 @@ section.preview { overflow-y: auto; background: var(--panel); }
       <input id="q" placeholder="搜索内容，或 @项目 #标签 上周 8月" autocomplete="off">
       <kbd>/</kbd>
     </label>
-    <button class="btn" id="ask" title="用 pi 当前的模型理解你的描述，在所有会话的标题和摘要中查找（每次 1 次模型请求）。快捷键 Shift+Enter">✨ 用 AI 找</button>
+    <button class="btn" id="ask" title="用 pi 当前的模型理解你的描述，在所有会话的标题和摘要中查找。会把你的描述和会话的标题、摘要、首句发送给模型服务商，每次 1 次模型请求。快捷键 Shift+Enter">✨ 用 AI 找</button>
     <div class="spacer"></div>
     <button class="btn" id="organize" hidden></button>
     <div class="seg" id="titleSeg" title="标题">
@@ -192,13 +192,15 @@ try { const p = JSON.parse(localStorage.getItem("pi-sessions-prefs") || "{}"); i
 const savePrefs = () => { try { localStorage.setItem("pi-sessions-prefs", JSON.stringify({ titleMode: state.titleMode, timeField: state.timeField })); } catch {} };
 
 // ---- API ----
-async function api(path, body, signal) {
+async function api(path, body, signal, etag) {
   let res;
   try {
-    res = await fetch(path, body === undefined ? { headers: { "x-token": TOKEN }, signal } : { method: "POST", headers: { "x-token": TOKEN, "content-type": "application/json" }, body: JSON.stringify(body), signal });
+    res = await fetch(path, body === undefined ? { headers: { "x-token": TOKEN, ...(etag ? { "if-none-match": etag } : {}) }, signal } : { method: "POST", headers: { "x-token": TOKEN, "content-type": "application/json" }, body: JSON.stringify(body), signal });
   } catch (e) {
     if (e.name === "AbortError") throw e; throw Object.assign(new Error("连接不到 pi。pi 可能已经退出，在 pi 中运行 /sessions 重新打开。"), { offline: true }); }
+  if (res.status === 304) return null;
   const data = await res.json().catch(() => ({}));
+  if (etag !== undefined) data.etag = res.headers.get("etag");
   if (!res.ok) throw Object.assign(new Error(data.error || "请求失败 " + res.status), { status: res.status });
   return data;
 }
@@ -212,9 +214,10 @@ function startOfDay(t) { const d = new Date(t); d.setHours(0, 0, 0, 0); return d
 function fmtFull(t) { const d = new Date(t); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 function dayKey(t) { const d = new Date(t), y = new Date().getFullYear(); return `${d.getFullYear() === y ? "" : d.getFullYear() + "-"}${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${WD[d.getDay()]}`; }
 function monthKey(t) { const d = new Date(t); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; }
-const HOME = () => { const c = state.sessions.map(s => s.cwd).find(c => /^\/(Users|home)\/[^/]+$/.test(c)); return c || ""; };
-function projName(cwd) { if (!cwd) return "未知目录"; if (cwd === HOME() || /^\/(Users|home)\/[^/]+$/.test(cwd)) return "~ (home)"; return cwd.split(/[\\/]/).filter(Boolean).pop(); }
-function tilde(p) { const m = p.match(/^\/(Users|home)\/[^/]+/); return m ? "~" + p.slice(m[0].length) : p; }
+// Windows paths are case-insensitive and may use either slash.
+const norm = p => { const s = String(p || "").replace(/[\\/]+$/, ""); return /^[a-z]:[\\/]/i.test(s) ? s.replace(/\//g, "\\").toLowerCase() : s; };
+function projName(cwd) { if (!cwd) return "未知目录"; if (state.home && norm(cwd) === norm(state.home)) return "~ (home)"; return cwd.split(/[\\/]/).filter(Boolean).pop(); }
+function tilde(p) { const h = state.home; if (h && norm(p).startsWith(norm(h)) && /^([\\/]|$)/.test(p.slice(h.length))) return "~" + p.slice(h.length); return p; }
 const T = s => new Date(s[state.timeField]).getTime();
 const rawTitle = s => s.name || s.firstUser || "（空会话）";
 const title = s => state.titleMode === "ai" ? (s.meta.title || rawTitle(s)) : rawTitle(s);
@@ -479,9 +482,15 @@ let pollTimer;
 async function refresh() {
   clearTimeout(pollTimer);
   try {
-    const data = await api("/api/sessions");
+    const data = await api("/api/sessions", undefined, undefined, state.etag || "");
+    if (!data) {
+      if (state.error) { state.error = ""; renderList(); }
+      pollTimer = setTimeout(refresh, state.organize.running ? 1500 : document.hidden ? 20000 : 5000);
+      return;
+    }
+    state.etag = data.etag;
     const first = !state.loaded;
-    Object.assign(state, { sessions: data.sessions, current: data.current, model: data.model, organize: data.organize, loaded: true, error: data.connected ? "" : "pi 正在切换会话，稍后会自动恢复。" });
+    Object.assign(state, { sessions: data.sessions, current: data.current, home: data.home || "", model: data.model, organize: data.organize, loaded: true, error: data.connected ? "" : "pi 正在切换会话，稍后会自动恢复。" });
     if (first) {
       const cur = state.sessions.find(isCurrent) || state.sessions[0];
       if (cur) state.openProjects.add(cur.cwd);
@@ -500,7 +509,7 @@ async function mutate(body, okMsg) {
 }
 async function organize(ids) {
   if (!ids.length) return;
-  if (!confirm(`将用 pi 当前的模型${state.model ? "（" + state.model + "）" : ""}为 ${ids.length} 个会话生成标题、摘要和标签。\n每个会话一次模型请求，会产生额外用量。继续？`)) return;
+  if (!confirm(`将用 pi 当前的模型${state.model ? "（" + state.model + "）" : ""}为 ${ids.length} 个会话生成标题、摘要和标签。\n\n· 每个会话的开头部分会发送给该模型的服务商\n· 每个会话一次模型请求，会产生额外用量\n\n继续？`)) return;
   try { state.organize = (await api("/api/organize", { ids })).organize; renderHeader(); refresh(); }
   catch (e) { toast(e.message); }
 }

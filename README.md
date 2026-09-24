@@ -13,7 +13,7 @@
 pi install git:github.com/woertedetiankong/pi-newsession
 
 # 或锁定到某个版本，不随仓库更新而变化
-pi install git:github.com/woertedetiankong/pi-newsession@v0.1.0
+pi install git:github.com/woertedetiankong/pi-newsession@v0.1.1
 
 # 或只装到当前项目（写入 .pi/settings.json）
 pi install git:github.com/woertedetiankong/pi-newsession -l
@@ -82,12 +82,18 @@ ssh -L 47291:127.0.0.1:47291 你的服务器
 
 ## 数据与安全
 
+- **隐私**：浏览、关键词搜索、置顶、归档、重命名都只在本机进行。只有你主动点击「AI 整理」或「用 AI 找」时，才会把内容发给 **pi 当前所用模型的服务商**：AI 整理发送每个会话的项目路径和前几条消息（最多约 6000 字），用 AI 找发送你的描述以及最近 600 个会话的项目名、日期、标题、摘要、标签和首句。服务商如何处理这些数据，以其隐私政策为准，与你平时和 pi 对话相同。
+
 - 会话从 `~/.pi/agent/sessions/`（或 `PI_CODING_AGENT_DIR` 指定的目录）读取，按文件修改时间增量缓存。
 - 通过 `--session-dir`、`PI_CODING_AGENT_SESSION_DIR` 或 settings 中的 `sessionDir` 自定义了会话目录时，插件会在 pi 使用该目录时自动记住它，之后一并列出。
 - 同时打开多个 pi 窗口时可以放心操作：每次保存都会加锁并基于最新文件合并，不会互相覆盖。
 - 插件数据保存在 `~/.pi/agent/pi-sessions/`：`meta.json`（标题、摘要、标签、置顶、归档、自定义会话目录）和 `token`（页面访问令牌，权限 0600）。
 - 页面服务只监听 `127.0.0.1`，优先使用端口 47291；所有接口都要求访问令牌，并拒绝非本机 Host 的请求。令牌放在地址的 `#` 之后，不会出现在请求日志里。
 - 服务在 pi 退出或 `/reload` 时关闭，会话切换时保持运行。
+
+## 平台
+
+在 macOS 上开发和测试。Linux 应当可用（打开浏览器依赖 `xdg-open`，没有时用 `/sessions url` 手动打开）。**尚未在 Windows 上测试**，遇到问题欢迎提 issue。
 
 ## 开发
 
