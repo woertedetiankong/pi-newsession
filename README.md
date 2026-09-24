@@ -13,7 +13,7 @@
 pi install git:github.com/woertedetiankong/pi-newsession
 
 # 或锁定到某个版本，不随仓库更新而变化
-pi install git:github.com/woertedetiankong/pi-newsession@v0.1.5
+pi install git:github.com/woertedetiankong/pi-newsession@v0.2.0
 
 # 或只装到当前项目（写入 .pi/settings.json）
 pi install git:github.com/woertedetiankong/pi-newsession -l
@@ -30,7 +30,11 @@ pi -e git:github.com/woertedetiankong/pi-newsession
 | --- | --- |
 | `/sessions` | 启动本地页面并在浏览器中打开 |
 | `/sessions url` | 显示完整地址（含访问令牌），可复制到其他浏览器 |
-| `/sessions stop` | 关闭页面服务 |
+| `/sessions stop` | 关闭页面服务（同一网页里的其他插件页面也一并关闭） |
+
+### 和其他 pi 插件共用一个网页
+
+页面由 pi-web 共享服务提供（`src/hub.ts`），同时安装了 [pi-kb 知识库](https://github.com/woertedetiankong/pi-kb) 等支持 pi-web 的插件时，它们在同一个地址下：会话在 `/sessions/`，知识库在 `/kb/`，顶部可以直接切换，共用一个访问令牌。只装了本插件时，页面和以前一样。旧的 `http://127.0.0.1:47291/#token=…` 链接会自动跳到 `/sessions/`。
 
 ## 页面
 
@@ -130,7 +134,7 @@ ssh -L 47291:127.0.0.1:47291 你的服务器
 - 现有数据会合并到新位置：新位置已有的数据（比如从另一台电脑同步来的）会保留，同一个会话两边都有时以你正在用的这份为准。
 - 原位置的 `meta.json` 会留着，确认没问题后可以自己删掉。随时可以点「恢复默认位置」切回来，同样会合并。
 - AI 整理进行中时不能移动，完成或取消后再试。
-- 这个设置保存在本机的 `~/.pi/agent/pi-sessions/config.json`。访问令牌 `token` 也始终留在这里，不会进入同步文件夹。
+- 这个设置保存在本机的 `~/.pi/agent/pi-sessions/config.json`。访问令牌保存在本机的 `~/.pi/agent/pi-web/token`，不会进入同步文件夹。
 
 也可以用环境变量 `PI_SESSIONS_DATA_DIR` 指定（优先于页面上的设置，设置后页面上不能再改）。第一次使用时，插件会把默认位置的 `meta.json` 复制过去，新位置已有 `meta.json` 时不会覆盖。
 
@@ -150,9 +154,9 @@ ssh -L 47291:127.0.0.1:47291 你的服务器
 - 会话从 `~/.pi/agent/sessions/`（或 `PI_CODING_AGENT_DIR` 指定的目录）读取，按文件修改时间增量缓存。
 - 通过 `--session-dir`、`PI_CODING_AGENT_SESSION_DIR` 或 settings 中的 `sessionDir` 自定义了会话目录时，插件会在 pi 使用该目录时自动记住它，之后一并列出。
 - 同时打开多个 pi 窗口时可以放心操作：每次保存都会加锁并基于最新文件合并，不会互相覆盖。
-- 插件数据保存在 `~/.pi/agent/pi-sessions/`：`meta.json`（标题、摘要、标签、置顶、归档、自定义会话目录；可以换位置，见「存储位置」）和 `token`（页面访问令牌，权限 0600，始终留在本机）。
+- 插件数据保存在 `~/.pi/agent/pi-sessions/`：`meta.json`（标题、摘要、标签、置顶、归档、自定义会话目录；可以换位置，见「存储位置」）。页面访问令牌在 `~/.pi/agent/pi-web/token`（权限 0600，始终留在本机，和其他 pi-web 插件共用；升级时沿用原来 `pi-sessions/token` 里的令牌，旧链接继续有效）。
 - 页面服务只监听 `127.0.0.1`，优先使用端口 47291；所有接口都要求访问令牌，并拒绝非本机 Host 的请求。令牌放在地址的 `#` 之后，不会出现在请求日志里。
-- 服务在 pi 退出或 `/reload` 时关闭，会话切换时保持运行。
+- 服务在 pi 退出或 `/reload` 时关闭（共用网页的所有插件都退出后才关闭），会话切换时保持运行。
 
 ## 平台
 

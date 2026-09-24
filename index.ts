@@ -1,7 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { randomBytes } from "node:crypto";
-import { constants, copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { constants, copyFile, mkdir, stat } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SessionsServer, type Binding } from "./src/server.ts";
@@ -11,14 +10,14 @@ import { SessionScanner } from "./src/scan.ts";
 import { focusTerminal } from "./src/focus.ts";
 import { DataLocation, openPath } from "./src/storage.ts";
 
-const PREFERRED_PORT = 47291;
 // The server outlives a single extension runtime (session switches rebuild the runtime), so it lives on globalThis.
 const shared = globalThis as typeof globalThis & { __piSessionsServer?: SessionsServer };
 
 function paths() {
   const agent = getAgentDir(), data = join(agent, "pi-sessions");
-  // meta.json may move (page setting or PI_SESSIONS_DATA_DIR); the token and config.json always stay here, on this machine.
-  return { root: join(agent, "sessions"), data, location: new DataLocation(data), tokenFile: join(data, "token"), settingsFile: join(agent, "settings.json") };
+  // meta.json may move (page setting or PI_SESSIONS_DATA_DIR); config.json always stays here, on this machine.
+  // The page token is shared with other pi-web apps and lives in <agent>/pi-web/token.
+  return { agent, root: join(agent, "sessions"), data, location: new DataLocation(data), settingsFile: join(agent, "settings.json") };
 }
 let metaCopied: Promise<void> | undefined;
 /** PI_SESSIONS_DATA_DIR newly set: carry over the existing meta.json unless one is already there (e.g. synced from another machine). */
@@ -35,13 +34,6 @@ async function metaStore(): Promise<MetaStore> {
   if (server) return server.currentMeta();
   await copyMetaOnce();
   return new MetaStore(join((await paths().location.resolve()).dir, "meta.json"));
-}
-async function loadToken(file: string, dir: string): Promise<string> {
-  try { const t = (await readFile(file, "utf8")).trim(); if (/^[a-f0-9]{32,}$/.test(t)) return t; } catch {}
-  const token = randomBytes(24).toString("hex");
-  await mkdir(dir, { recursive: true });
-  await writeFile(file, token, { mode: 0o600 });
-  return token;
 }
 /** Remembers a session dir outside the default root (custom sessionDir / --session-dir / env) so the page lists it too. */
 async function rememberSessionDir(ctx: ExtensionContext): Promise<void> {
@@ -74,30 +66,36 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
     },
   });
 
-  pi.on("session_start", (_event, ctx) => {
-    if (shared.__piSessionsServer) shared.__piSessionsServer.binding = bind(ctx);
+  pi.on("session_start", async (_event, ctx) => {
+    // Mount early (no server yet) so other pi-web pages, such as the knowledge base, link here.
+    try { (await ensureServer()).binding = bind(ctx); } catch {}
     rememberSessionDir(ctx).catch(() => {});
   });
   pi.on("session_shutdown", async event => {
     const server = shared.__piSessionsServer;
     if (!server) return;
     server.binding = undefined;
-    // Reload may bring new plugin code, so restart the server lazily on the next /sessions.
+    // Reload may bring new plugin code: leave the shared hub (it stops once every app has left) and remount on the next session_start.
     if (event.reason === "quit" || event.reason === "reload") { shared.__piSessionsServer = undefined; await server.close(); }
   });
 
-  async function start(ctx: ExtensionContext): Promise<string> {
+  async function ensureServer(): Promise<SessionsServer> {
     let server = shared.__piSessionsServer;
     if (!server) {
       const p = paths();
       await copyMetaOnce();
       server = new SessionsServer({
         root: p.root, metaFile: join((await p.location.resolve()).dir, "meta.json"), location: p.location, settingsFile: p.settingsFile,
-        token: await loadToken(p.tokenFile, p.data), port: PREFERRED_PORT,
-        webFile: fileURLToPath(new URL("./web/index.html", import.meta.url)),
+        agentDir: p.agent, webFile: fileURLToPath(new URL("./web/index.html", import.meta.url)),
       });
       shared.__piSessionsServer = server;
     }
+    server.mount();
+    return server;
+  }
+
+  async function start(ctx: ExtensionContext): Promise<string> {
+    const server = await ensureServer();
     server.binding = bind(ctx);
     await rememberSessionDir(ctx).catch(() => {});
     return server.start();
@@ -123,10 +121,9 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
           return;
         }
         if (command === "stop") {
-          const server = shared.__piSessionsServer;
-          shared.__piSessionsServer = undefined;
-          await server?.close();
-          ctx.ui.notify("会话管理页面已关闭", "info");
+          // The page is shared with other pi-web apps: stop listening, keep everything mounted for the next open.
+          await shared.__piSessionsServer?.hub.close();
+          ctx.ui.notify("网页已关闭（同一网页里的其他插件页面也一并关闭）", "info");
           return;
         }
         const url = await start(ctx);

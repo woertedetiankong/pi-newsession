@@ -17,6 +17,9 @@ import { DataLocation, expandDir } from "../src/storage.ts";
 import { folderName, sessionImages } from "../src/export.ts";
 
 async function temp(t: any): Promise<string> { const dir = await mkdtemp(join(tmpdir(), "pi-sessions-test-")); t.after(() => rm(dir, { recursive: true, force: true })); return dir; }
+/** Sessions API routes are mounted under /api/sessions/ on the pi-web hub. */
+const api = (p: string) => p.replace(/^\/api\//, "/api/sessions/");
+
 export function sessionFile(id: string, cwd: string, messages: [string, string][], extra: object[] = []): string {
   const lines: object[] = [{ type: "session", version: 3, id, timestamp: "2026-09-01T08:00:00.000Z", cwd }, { type: "model_change", id: "m1", parentId: null, timestamp: "2026-09-01T08:00:00.100Z", provider: "p", modelId: "gpt-x" }];
   messages.forEach(([role, text], i) => lines.push({ type: "message", id: `e${i}`, parentId: i ? `e${i - 1}` : "m1", timestamp: `2026-09-01T08:0${Math.min(i + 1, 9)}:00.000Z`, message: { role, content: role === "user" ? [{ type: "text", text }] : [{ type: "thinking", thinking: "hmm" }, { type: "text", text }] } }));
@@ -136,11 +139,15 @@ test("server serves the page, guards the API and routes actions to the binding",
   server.binding = binding;
   const url = await server.start();
   t.after(() => server.close());
-  const base = url.replace(/\/#.*/, "");
-  const call = (p: string, body?: object, token = "f".repeat(32)) => fetch(base + p, body ? { method: "POST", headers: { "x-token": token, "content-type": "application/json" }, body: JSON.stringify(body) } : { headers: { "x-token": token } });
+  const base = new URL(url).origin;
+  const call = (p: string, body?: object, token = "f".repeat(32)) => fetch(base + api(p), body ? { method: "POST", headers: { "x-token": token, "content-type": "application/json" }, body: JSON.stringify(body) } : { headers: { "x-token": token } });
 
-  assert.match(url, /#token=f{32}$/);
-  assert.equal(await (await fetch(base + "/")).text(), "<p>page</p>");
+  assert.match(url, /\/sessions\/#token=f{32}$/);
+  assert.equal(await (await fetch(base + "/sessions/")).text(), "<p>page</p>");
+  assert.equal(await (await fetch(base + "/")).text(), "<p>page</p>", "old links to / land on the sessions page");
+  assert.match(await (await fetch(base + "/hub.js")).text(), /window\.piWeb/);
+  const hubApps = await (await fetch(base + "/api/hub/apps", { headers: { "x-token": "f".repeat(32) } })).json();
+  assert.deepEqual(hubApps.apps.map((a: any) => a.id), ["sessions"]);
   assert.equal((await call("/api/sessions", undefined, "wrong")).status, 401);
   const list = await (await call("/api/sessions")).json();
   assert.equal(list.current, join(dir, "b.jsonl")); assert.equal(list.model, "m");
@@ -149,11 +156,11 @@ test("server serves the page, guards the API and routes actions to the binding",
   assert.equal(list.home, homedir());
   const first = await call("/api/sessions"), etag = first.headers.get("etag")!;
   assert.ok(etag);
-  const again = await fetch(base + "/api/sessions", { headers: { "x-token": "f".repeat(32), "if-none-match": etag } });
+  const again = await fetch(base + "/api/sessions/sessions", { headers: { "x-token": "f".repeat(32), "if-none-match": etag } });
   assert.equal(again.status, 304, "unchanged list is not re-sent");
   await appendFile(path, JSON.stringify({ type: "message", id: "late", parentId: "e1", timestamp: "2026-09-09T00:00:00.000Z", message: { role: "user", content: "新消息" } }) + "\n");
   await utimes(path, new Date(), new Date(Date.now() + 5000));
-  const changed = await fetch(base + "/api/sessions", { headers: { "x-token": "f".repeat(32), "if-none-match": etag } });
+  const changed = await fetch(base + "/api/sessions/sessions", { headers: { "x-token": "f".repeat(32), "if-none-match": etag } });
   assert.equal(changed.status, 200, "a changed session invalidates the etag");
   assert.notEqual(changed.headers.get("etag"), etag);
   assert.deepEqual((await (await call("/api/search?q=缓存")).json()).hits.map((h: any) => h.id), ["a"]);
@@ -190,9 +197,9 @@ test("server serves the page, guards the API and routes actions to the binding",
   server.binding = undefined;
   assert.equal((await call("/api/open", { id: "a" })).status, 503);
   const port = Number(new URL(base).port);
-  const status = await new Promise<number>((resolve, reject) => request({ host: "127.0.0.1", port, path: "/api/sessions", headers: { "x-token": "f".repeat(32), host: `evil.example:${port}` } }, res => { res.resume(); resolve(res.statusCode!); }).on("error", reject).end());
+  const status = await new Promise<number>((resolve, reject) => request({ host: "127.0.0.1", port, path: "/api/sessions/sessions", headers: { "x-token": "f".repeat(32), host: `evil.example:${port}` } }, res => { res.resume(); resolve(res.statusCode!); }).on("error", reject).end());
   assert.equal(status, 403, "DNS-rebinding host is rejected");
-  assert.equal((await fetch(base + "/api/meta", { method: "POST", headers: { "x-token": "f".repeat(32), "content-type": "text/plain" }, body: "{}" })).status, 415);
+  assert.equal((await fetch(base + "/api/sessions/meta", { method: "POST", headers: { "x-token": "f".repeat(32), "content-type": "text/plain" }, body: "{}" })).status, 415);
 });
 
 test("ask: candidate lines are compact, newest first, and count unorganized sessions", () => {
@@ -233,9 +240,9 @@ test("server /api/ask validates input and returns ranked hits", async t => {
   let model: any = { id: "m" };
   server.binding = { currentSessionFile: () => undefined, open: async () => ({ ok: true, message: "" }), rename: async () => {},
     model: () => ({ model, modelRegistry: { complete: async () => ({ stopReason: "stop", content: [{ type: "text", text: '{"results":[{"n":1,"reason":"滚动"}]}' }] }) } }) as any };
-  const base = (await server.start()).replace(/\/#.*/, "");
+  const base = new URL(await server.start()).origin;
   t.after(() => server.close());
-  const ask = (body: object) => fetch(base + "/api/ask", { method: "POST", headers: { "x-token": "e".repeat(32), "content-type": "application/json" }, body: JSON.stringify(body) });
+  const ask = (body: object) => fetch(base + "/api/sessions/ask", { method: "POST", headers: { "x-token": "e".repeat(32), "content-type": "application/json" }, body: JSON.stringify(body) });
   assert.equal((await ask({ query: "  " })).status, 400);
   assert.deepEqual(await (await ask({ query: "滚动" })).json(), { results: [{ id: "a", reason: "滚动" }], candidates: 1, unorganized: 1, model: "m" });
   model = undefined;
@@ -409,9 +416,9 @@ test("server storage: lists locations and moves plugin data with a merge", async
   const make = () => new SessionsServer({ root: sessions, metaFile: join(home, "meta.json"), location, settingsFile: join(root, "settings.json"), webFile: join(root, "index.html"), token });
   const server = make(), other = make();
   server.binding = { currentSessionFile: () => undefined, sessionDir: () => join(sessions, "--w--"), model: () => undefined, open: async () => ({ ok: true, message: "" }), rename: async () => {} };
-  const base = (await server.start()).replace(/\/#.*/, "");
+  const base = new URL(await server.start()).origin;
   t.after(() => server.close());
-  const call = (path: string, body?: object) => fetch(base + path, body ? { method: "POST", headers: { "x-token": token, "content-type": "application/json" }, body: JSON.stringify(body) } : { headers: { "x-token": token } });
+  const call = (path: string, body?: object) => fetch(base + api(path), body ? { method: "POST", headers: { "x-token": token, "content-type": "application/json" }, body: JSON.stringify(body) } : { headers: { "x-token": token } });
 
   await server.meta.addSessionDir(custom);
   await server.meta.patch("a", { title: "当前标题", pinned: true });
@@ -469,9 +476,9 @@ test("server exports images to the chosen folder, keeps the folder after a renam
   await writeFile(join(root, "index.html"), "");
   const location = new DataLocation(home, {});
   const server = new SessionsServer({ root: sessions, metaFile: join(home, "meta.json"), location, webFile: join(root, "index.html"), token });
-  const base = (await server.start()).replace(/\/#.*/, "");
+  const base = new URL(await server.start()).origin;
   t.after(() => server.close());
-  const call = (path: string, body?: object) => fetch(base + path, body ? { method: "POST", headers: { "x-token": token, "content-type": "application/json" }, body: JSON.stringify(body) } : { headers: { "x-token": token } });
+  const call = (path: string, body?: object) => fetch(base + api(path), body ? { method: "POST", headers: { "x-token": token, "content-type": "application/json" }, body: JSON.stringify(body) } : { headers: { "x-token": token } });
 
   const list = await (await call("/api/sessions")).json();
   assert.deepEqual(Object.fromEntries(list.sessions.map((s: any) => [s.id, s.images])), { sess1234abcd: 1, noimages: 0 });

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>pi 会话管理</title>
+<script src="/hub.js"></script>
 <style>
 :root {
   --bg: #f6f6f3; --panel: #ffffff; --side: #efefea; --line: #e4e3dc; --line-strong: #d3d2c9;
@@ -43,6 +44,8 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
 .app { display: grid; grid-template-columns: 232px minmax(320px, 1fr) minmax(340px, 1.1fr); grid-template-rows: 56px 1fr; height: 100vh; }
 header { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .brand { font-weight: 650; letter-spacing: .2px; white-space: nowrap; display: flex; align-items: center; gap: 8px; min-width: 200px; }
+.pi-web-multi .brand-name { display: none; }
+.pi-web-multi .brand { min-width: 0; }
 .brand .logo { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 13px; }
 .search { flex: 1; max-width: 560px; position: relative; }
 .search input { width: 100%; height: 36px; border: 1px solid var(--line-strong); background: var(--bg); color: var(--text); border-radius: 8px; padding: 0 34px 0 34px; font: inherit; outline: none; }
@@ -250,7 +253,8 @@ dialog.dlg::backdrop { background: rgba(0,0,0,.35); }
 <body>
 <div class="app" id="app">
   <header>
-    <div class="brand"><span class="logo">π</span>会话</div>
+    <div class="brand"><span class="logo">π</span><span class="brand-name">会话</span></div>
+    <nav id="pi-web-nav"></nav>
     <label class="search">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       <input id="q" placeholder="搜索内容，或 @项目 #标签 上周 8月" autocomplete="off">
@@ -276,7 +280,8 @@ dialog.dlg::backdrop { background: rgba(0,0,0,.35); }
 
 <dialog id="imgview"><img alt=""><div class="bar"><a class="btn" id="imgview-save" download>下载图片</a><button class="btn" data-close>关闭</button></div></dialog>
 <script>
-const TOKEN = (() => {
+// /hub.js (shared with other pi-web apps) reads the token from the link and keeps it.
+const TOKEN = window.piWeb ? window.piWeb.token : (() => {
   const m = location.hash.match(/token=([a-f0-9]+)/);
   if (m) { try { localStorage.setItem("pi-sessions-token", m[1]); } catch {} history.replaceState(null, "", location.pathname); return m[1]; }
   try { return localStorage.getItem("pi-sessions-token") || ""; } catch { return ""; }
@@ -293,10 +298,12 @@ try { const p = JSON.parse(localStorage.getItem("pi-sessions-prefs") || "{}"); i
 const savePrefs = () => { try { localStorage.setItem("pi-sessions-prefs", JSON.stringify({ titleMode: state.titleMode, timeField: state.timeField, aiModel: state.aiModel })); } catch {} };
 
 // ---- API ----
+// Routes are written as /api/...; on the shared hub they live under /api/sessions/...
+const apiUrl = path => "/api/sessions" + path.slice(4);
 async function api(path, body, signal, etag) {
   let res;
   try {
-    res = await fetch(path, body === undefined ? { headers: { "x-token": TOKEN, ...(etag ? { "if-none-match": etag } : {}) }, signal } : { method: "POST", headers: { "x-token": TOKEN, "content-type": "application/json" }, body: JSON.stringify(body), signal });
+    res = await fetch(apiUrl(path), body === undefined ? { headers: { "x-token": TOKEN, ...(etag ? { "if-none-match": etag } : {}) }, signal } : { method: "POST", headers: { "x-token": TOKEN, "content-type": "application/json" }, body: JSON.stringify(body), signal });
   } catch (e) {
     if (e.name === "AbortError") throw e; throw Object.assign(new Error("连接不到 pi。pi 可能已经退出，在 pi 中运行 /sessions 重新打开。"), { offline: true }); }
   if (res.status === 304) return null;
@@ -699,7 +706,7 @@ function loadShots(root) {
     b.dataset.loaded = "1";
     let p = blobs.get(b.dataset.img);
     if (!p) {
-      p = fetch(b.dataset.img, { headers: { "x-token": TOKEN } }).then(r => r.ok ? r.blob() : Promise.reject()).then(x => URL.createObjectURL(x));
+      p = fetch(apiUrl(b.dataset.img), { headers: { "x-token": TOKEN } }).then(r => r.ok ? r.blob() : Promise.reject()).then(x => URL.createObjectURL(x));
       p.catch(() => blobs.delete(b.dataset.img));
       blobs.set(b.dataset.img, p);
     }

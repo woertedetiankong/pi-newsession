@@ -1,9 +1,7 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { readFile, stat } from "node:fs/promises";
-import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import type { AddressInfo } from "node:net";
 import { dirname, join, resolve, sep } from "node:path";
+import { createHub, sharedHub, type WebApp, type WebBinary, type WebHub, type WebLanguage, type WebRequest } from "./hub.ts";
 import { SessionScanner, searchSnippet, type SessionRecord } from "./scan.ts";
 import { MetaStore, type MetaPatch } from "./meta.ts";
 import { Organizer, organizeOne, type ModelContext } from "./organize.ts";
@@ -23,25 +21,32 @@ export interface Binding {
 }
 export interface ServerOptions {
   /** Default session root; extra custom session dirs come from the meta store. */
-  root: string; metaFile: string; webFile: string; token: string; port?: number;
+  root: string; metaFile: string; webFile: string;
+  /** pi's agent directory, for the shared pi-web hub (and its token). */
+  agentDir?: string;
+  /** A fixed token gives this server a private hub instead of the shared one (tests). */
+  token?: string; port?: number;
   /** Lets the page move meta.json; without it the data dir is fixed at metaFile. */
   location?: DataLocation;
   /** pi's settings.json, shown in the "how to move sessions" hint. */
   settingsFile?: string; }
 
+/** The hub reads `status` structurally, so this works across package copies. */
 class HttpError extends Error { constructor(readonly status: number, message: string) { super(message); } }
-/** A non-JSON response body. */
-class Binary { constructor(readonly data: Buffer, readonly type: string) {} }
 /** Raster types only: anything else (e.g. SVG with scripts) is sent as a download. */
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/avif"]);
 
-export class SessionsServer {
+/** The sessions page and API, mounted on the shared pi-web hub at /sessions/ and /api/sessions/. */
+export class SessionsServer implements WebApp {
+  readonly id = "sessions";
+  readonly order = 10;
+  readonly title: Record<WebLanguage, string> = { zh: "会话", en: "Sessions" };
+  readonly languages: WebLanguage[] = ["zh"];
+  readonly hub: WebHub;
   binding?: Binding;
   readonly scanner: SessionScanner;
   meta: MetaStore;
   readonly organizer: Organizer;
-  private server?: Server;
-  private port = 0;
   private records: SessionRecord[] = [];
   /** Recently opened transcripts, keyed by path; re-parsed when the file changes. */
   private transcripts = new Map<string, { version: string; items: TranscriptItem[] }>();
@@ -54,28 +59,34 @@ export class SessionsServer {
     this.meta = new MetaStore(opts.metaFile);
     this.scanner = new SessionScanner(async () => [opts.root, ...(await (await this.currentMeta()).sessionDirs())]);
     this.organizer = new Organizer((id, signal) => this.organize(id, signal));
+    this.hub = opts.token
+      ? createHub({ agentDir: opts.agentDir ?? "", token: opts.token, port: opts.port ?? 0 })
+      : sharedHub(opts.agentDir ?? join(homedir(), ".pi", "agent"));
   }
 
-  get url(): string | undefined { return this.server ? `http://127.0.0.1:${this.port}/#token=${this.opts.token}` : undefined; }
+  get url(): string | undefined { return this.hub.url(this.id); }
+
+  /** Mounts on the hub (cheap, lets other apps link here) without starting the server. */
+  mount(): void { this.hub.mount(this); }
 
   async start(): Promise<string> {
-    if (this.server) return this.url!;
-    const server = createServer((req, res) => { void this.handle(req, res); });
-    const listen = (port: number) => new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(port, "127.0.0.1", () => { server.off("error", reject); resolve(); });
-    });
-    try { await listen(this.opts.port ?? 0); } catch { await listen(0); }
-    server.unref();
-    this.server = server;
-    this.port = (server.address() as AddressInfo).port;
+    this.mount();
+    await this.hub.start();
     return this.url!;
   }
+  /** Leaves the hub; the hub stops once no app is left. */
   async close(): Promise<void> {
     this.organizer.cancel();
-    const server = this.server;
-    this.server = undefined;
-    if (server) await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections?.(); });
+    await this.hub.unmount(this.id);
+  }
+
+  page(): Promise<string> { return readFile(this.opts.webFile, "utf8"); }
+
+  async handle(req: WebRequest): Promise<unknown> {
+    const body = req.method === "POST" ? await req.json() : {};
+    // Routes keep their original /api/... names; the hub has already stripped the /api/sessions prefix.
+    const url = new URL(`http://local/api${req.path}?${req.query}`);
+    return this.route(req.method, url, body, req.signal);
   }
 
   /** Follows a data dir change made on the page, in this or another pi window. */
@@ -163,46 +174,6 @@ export class SessionsServer {
     await meta.organized(id, result, record.modified);
   }
 
-  private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    try {
-      // Reject DNS-rebinding style requests: only our own loopback host is accepted.
-      const host = req.headers.host ?? "";
-      if (host !== `127.0.0.1:${this.port}` && host !== `localhost:${this.port}`) throw new HttpError(403, "forbidden host");
-      const url = new URL(req.url ?? "/", `http://${host}`);
-      if (req.method === "GET" && url.pathname === "/") {
-        const html = await readFile(this.opts.webFile, "utf8");
-        res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-frame-options": "DENY", "referrer-policy": "no-referrer" });
-        res.end(html);
-        return;
-      }
-      if (!url.pathname.startsWith("/api/")) throw new HttpError(404, "not found");
-      if (req.headers["x-token"] !== this.opts.token) throw new HttpError(401, "令牌无效，请在 pi 中重新运行 /sessions");
-      const body = req.method === "POST" ? await readJson(req) : {};
-      // Cancel model work when the page goes away mid-request.
-      const aborter = new AbortController();
-      res.on("close", () => { if (!res.writableFinished) aborter.abort(); });
-      const data = await this.route(req.method ?? "GET", url, body, aborter.signal);
-      if (data instanceof Binary) {
-        // An entry's images never change, so the browser may keep them.
-        res.writeHead(200, { "content-type": data.type, "content-length": data.data.length, "cache-control": "private, max-age=86400", "x-content-type-options": "nosniff" });
-        res.end(data.data);
-        return;
-      }
-      if (req.method === "GET") {
-        // The page polls; answer 304 when nothing changed so it neither re-downloads nor re-renders.
-        const text = JSON.stringify(data), etag = `"${createHash("sha1").update(text).digest("base64url")}"`;
-        if (req.headers["if-none-match"] === etag) { res.writeHead(304, { etag, "cache-control": "no-store" }); res.end(); return; }
-        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", etag });
-        res.end(text);
-        return;
-      }
-      json(res, 200, data);
-    } catch (e) {
-      const status = e instanceof HttpError ? e.status : 500;
-      json(res, status, { error: (e as Error).message });
-    }
-  }
-
   private async route(method: string, url: URL, body: any, signal: AbortSignal): Promise<unknown> {
     const p = url.pathname;
     await this.currentMeta();
@@ -233,7 +204,8 @@ export class SessionsServer {
       const raw = await readFile(r.path, "utf8").catch(() => { throw new HttpError(404, "读取会话文件失败，可能已被删除"); });
       const img = findImage(raw, url.searchParams.get("entry") ?? "", Number(url.searchParams.get("n")) || 0);
       if (!img) throw new HttpError(404, "找不到这张图片");
-      return new Binary(img.data, IMAGE_TYPES.has(img.mimeType) ? img.mimeType : "application/octet-stream");
+      // An entry's images never change, so the browser may keep them.
+      return { binary: img.data, type: IMAGE_TYPES.has(img.mimeType) ? img.mimeType : "application/octet-stream", cacheSeconds: 86400 } satisfies WebBinary;
     }
     if (method === "GET" && p === "/api/search") {
       const words = (url.searchParams.get("q") ?? "").toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
@@ -329,18 +301,4 @@ function pickModel(ctx: ModelContext, key: string) {
   if (!model) throw new HttpError(400, "找不到所选模型，可能已从 pi 中移除");
   if (!ctx.modelRegistry.hasConfiguredAuth(model)) throw new HttpError(409, `${model.id} 还没有配置登录或 API Key`);
   return model;
-}
-
-function json(res: ServerResponse, status: number, data: unknown): void {
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-  res.end(JSON.stringify(data));
-}
-function readJson(req: IncomingMessage): Promise<any> {
-  if (!String(req.headers["content-type"] ?? "").startsWith("application/json")) return Promise.reject(new HttpError(415, "需要 JSON"));
-  return new Promise((resolve, reject) => {
-    let size = 0; const chunks: Buffer[] = [];
-    req.on("data", (c: Buffer) => { size += c.length; if (size > 64 * 1024) { reject(new HttpError(413, "请求太大")); req.destroy(); } else chunks.push(c); });
-    req.on("end", () => { try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {}); } catch { reject(new HttpError(400, "JSON 格式错误")); } });
-    req.on("error", reject);
-  });
 }
