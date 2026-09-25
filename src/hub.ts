@@ -101,15 +101,28 @@ export interface HubOptions {
   /** Fixed token (tests). */
   token?: string;
   port?: number;
+  /** Start as soon as the first app mounts (the server was running before a reload). */
+  resume?: boolean;
 }
 
-const shared = globalThis as typeof globalThis & { __piWebHub?: WebHub };
+/**
+ * __piWebResume: the port a running hub was serving when its last app left. /reload unmounts every
+ * app and loads new code; the next hub picks the port up and starts again as soon as an app mounts,
+ * so pages that are already open reconnect instead of being cut off.
+ */
+const shared = globalThis as typeof globalThis & { __piWebHub?: WebHub; __piWebResume?: number };
 
 /** The process-wide hub, created on first use. */
 export function sharedHub(agentDir: string): WebHub {
   const existing = shared.__piWebHub;
   if (existing && typeof existing.mount === "function" && existing.version >= 1) return existing;
-  const hub = new Hub({ agentDir }, () => { if (shared.__piWebHub === hub) shared.__piWebHub = undefined; });
+  const resume = shared.__piWebResume;
+  shared.__piWebResume = undefined;
+  const hub = new Hub({ agentDir, port: resume, resume: resume !== undefined }, port => {
+    if (shared.__piWebHub !== hub) return;
+    shared.__piWebHub = undefined;
+    shared.__piWebResume = port;
+  });
   shared.__piWebHub = hub;
   return hub;
 }
@@ -143,21 +156,29 @@ class Hub implements WebHub {
   private port = 0;
   private token?: string;
   private readonly options: HubOptions;
-  private readonly onDiscard?: () => void;
+  /** Called when the last app leaves, with the port if the server was running. */
+  private readonly onDiscard?: (port: number | undefined) => void;
+  private resume: boolean;
+  private starting?: Promise<void>;
 
-  constructor(options: HubOptions, onDiscard?: () => void) {
+  constructor(options: HubOptions, onDiscard?: (port: number | undefined) => void) {
     this.options = options;
     this.onDiscard = onDiscard;
     this.token = options.token;
+    this.resume = options.resume ?? false;
   }
 
-  mount(app: WebApp): void { this.registry.set(app.id, app); }
+  mount(app: WebApp): void {
+    this.registry.set(app.id, app);
+    if (this.resume) { this.resume = false; this.start().catch(() => {}); }
+  }
 
   async unmount(id: string): Promise<void> {
     this.registry.delete(id);
     if (this.registry.size) return;
+    const port = this.server ? this.port : undefined;
     await this.close();
-    this.onDiscard?.();
+    this.onDiscard?.(port);
   }
 
   apps(): WebApp[] { return [...this.registry.values()].sort((a, b) => a.order - b.order); }
@@ -168,8 +189,13 @@ class Hub implements WebHub {
     return `http://127.0.0.1:${this.port}/${id ? `${id}/` : ""}#token=${this.token}`;
   }
 
-  async start(): Promise<void> {
-    if (this.server) return;
+  start(): Promise<void> {
+    if (this.server) return Promise.resolve();
+    // One listen at a time: a resumed start and a command may overlap.
+    return this.starting ??= this.listen().finally(() => { this.starting = undefined; });
+  }
+
+  private async listen(): Promise<void> {
     this.token ??= loadToken(this.options.agentDir);
     const server = createServer((req, res) => { void this.handle(req, res); });
     const listen = (port: number) => new Promise<void>((resolve, reject) => {
@@ -184,6 +210,7 @@ class Hub implements WebHub {
   }
 
   async close(): Promise<void> {
+    await this.starting?.catch(() => {});
     const server = this.server;
     this.server = undefined;
     if (server) await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections?.(); });
