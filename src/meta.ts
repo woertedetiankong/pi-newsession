@@ -85,6 +85,12 @@ export class MetaStore {
       return next;
     });
   }
+  /** Forgets deleted sessions. */
+  async remove(ids: string[]): Promise<void> {
+    const sessions = (await this.load()).sessions;
+    if (!ids.some(id => sessions[id])) return;
+    await this.write(data => { for (const id of ids) delete data.sessions[id]; });
+  }
   /** Remembers a session directory outside the default location (custom sessionDir). */
   async addSessionDir(dir: string): Promise<void> {
     if ((await this.load()).sessionDirs.includes(dir)) return;

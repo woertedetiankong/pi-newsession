@@ -9,6 +9,7 @@ import { Organizer, organizeOne, type ModelContext } from "./organize.ts";
 import { askSessions } from "./ask.ts";
 import { checkWritable, DEFAULT_IMAGE_DIR, expandDir, openPath, type DataLocation } from "./storage.ts";
 import { exportImages } from "./export.ts";
+import { moveToTrash, purgeTrash, trashCount, TRASH_DAYS } from "./trash.ts";
 import { buildTranscript, findImage, firstMatch, type TranscriptItem } from "./transcript.ts";
 
 /** What the server needs from the live pi runtime; replaced on every session_start. */
@@ -77,6 +78,8 @@ export class SessionsServer implements WebApp {
   async start(): Promise<string> {
     this.mount();
     await this.hub.start();
+    // Clean out old deleted sessions in the background; never holds up or fails the start.
+    this.trashDir().then(dir => purgeTrash(dir, Date.now() - TRASH_DAYS * 864e5)).catch(() => {});
     return this.url!;
   }
   /** Leaves the hub; the hub stops once no app is left. */
@@ -120,11 +123,12 @@ export class SessionsServer implements WebApp {
       count: records.filter(r => inside(r.path, dir)).length,
     })));
     const data = this.opts.location ? await this.opts.location.resolve() : { dir: dirname(meta.file), source: "default" as const };
-    const images = await this.imageDir();
+    const images = await this.imageDir(), trash = await this.trashDir();
     return {
       images: { ...images, exists: !!(await stat(images.dir).catch(() => undefined))?.isDirectory(), count: records.reduce((n, r) => n + r.images, 0), sessions: records.filter(r => r.images).length },
       sessions: { dirs, settingsFile: this.opts.settingsFile },
       data: { ...data, defaultDir: this.opts.location?.defaultDir ?? data.dir, movable: !!this.opts.location },
+      trash: { dir: trash, exists: !!(await stat(trash).catch(() => undefined))?.isDirectory(), count: await trashCount(trash), days: TRASH_DAYS },
     };
   }
 
@@ -155,6 +159,25 @@ export class SessionsServer implements WebApp {
     try { dir = input ? expandDir(input) : undefined; } catch (e) { throw withStatus(e, 400); }
     try { await checkWritable(dir ?? DEFAULT_IMAGE_DIR); } catch (e) { throw withStatus(e, 400); }
     if (this.opts.location) await this.opts.location.setImageDir(dir); else this.imageDirSetting = dir;
+  }
+
+  /** Deleted sessions go to `trash/` next to meta.json. */
+  private async trashDir(): Promise<string> { return join(dirname((await this.currentMeta()).file), "trash"); }
+
+  /** Moves sessions to the trash folder and forgets their meta; never the one pi has open. */
+  private async deleteSessions(ids: string[], lang: Lang) {
+    const meta = await this.currentMeta(), trash = await this.trashDir(), current = this.binding?.currentSessionFile();
+    const deleted: string[] = [], skipped: string[] = [], failed: { id: string; error: string }[] = [];
+    for (const id of ids) {
+      const r = this.records.find(x => x.id === id);
+      if (!r) { failed.push({ id, error: localize(new LocalizedError("sessionNotFound"), lang) }); continue; }
+      if (current && resolve(current) === resolve(r.path)) { skipped.push(id); continue; }
+      try { await moveToTrash(r.path, trash); deleted.push(id); this.transcripts.delete(r.path); }
+      catch (e) { failed.push({ id, error: (e as Error).message }); }
+    }
+    await meta.remove(deleted);
+    await this.refresh();
+    return { deleted, skipped, failed, trash };
   }
 
   private async refresh(): Promise<SessionRecord[]> { return this.records = await this.scanner.scan(); }
@@ -277,8 +300,8 @@ export class SessionsServer implements WebApp {
     if (method === "GET" && p === "/api/storage") return this.storage();
     if (method === "POST" && p === "/api/storage/open") {
       // Only folders the page lists, never an arbitrary path from the request.
-      const { sessions, data, images } = await this.storage();
-      const allowed = [...sessions.dirs.filter(d => d.exists).map(d => d.path), data.dir, ...(images.exists ? [images.dir] : [])];
+      const { sessions, data, images, trash } = await this.storage();
+      const allowed = [...sessions.dirs.filter(d => d.exists).map(d => d.path), data.dir, ...(images.exists ? [images.dir] : []), ...(trash.exists ? [trash.dir] : [])];
       if (typeof body.path !== "string" || !allowed.includes(body.path)) throw httpError(400, "cannotOpen");
       openPath(body.path);
       return { ok: true };
@@ -300,6 +323,16 @@ export class SessionsServer implements WebApp {
       // Show the result: the session's own folder for one session, otherwise the export folder.
       if (body.reveal && result.images) openPath(result.folder ?? dir);
       return result;
+    }
+    if (method === "POST" && p === "/api/delete") {
+      const ids: string[] = Array.isArray(body.ids) ? [...new Set<string>(body.ids.filter((x: unknown) => typeof x === "string"))].slice(0, 1000) : [];
+      if (!ids.length) throw httpError(400, "missingId");
+      await this.refresh();
+      return this.deleteSessions(ids, lang);
+    }
+    if (method === "POST" && p === "/api/trash/empty") {
+      await purgeTrash(await this.trashDir());
+      return this.storage();
     }
     if (method === "POST" && p === "/api/organize/cancel") { this.organizer.cancel(); return { organize: this.organizer.status }; }
     throw Object.assign(new Error("not found"), { status: 404 });

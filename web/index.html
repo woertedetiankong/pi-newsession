@@ -10,7 +10,7 @@
   --bg: #f6f6f3; --panel: #ffffff; --side: #efefea; --line: #e4e3dc; --line-strong: #d3d2c9;
   --text: #1f1f1c; --muted: #6d6c64; --faint: #9c9b92;
   --accent: #3d5afe; --accent-soft: #e8ecff; --accent-text: #2a3fc2;
-  --ok: #2e9d6a; --idle: #b5b4ab; --warn: #c98a12;
+  --ok: #2e9d6a; --idle: #b5b4ab; --warn: #c98a12; --danger: #d4453b;
   --mark: #fff1a8; --user: #f1f0ea; --shadow: 0 1px 2px rgba(20,20,10,.05), 0 4px 16px rgba(20,20,10,.04);
   --r: 10px;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -21,7 +21,7 @@
     --bg: #161615; --panel: #1e1e1c; --side: #1a1a18; --line: #2c2c29; --line-strong: #3a3a36;
     --text: #ecebe6; --muted: #a09f97; --faint: #6f6e67;
     --accent: #7b8cff; --accent-soft: #262b4a; --accent-text: #aab6ff;
-    --ok: #4cc38a; --idle: #5c5b55; --warn: #e0a83a;
+    --ok: #4cc38a; --idle: #5c5b55; --warn: #e0a83a; --danger: #ef6a5f;
     --mark: #5a4e14; --user: #262624; --shadow: none;
   }
 }
@@ -29,7 +29,7 @@
   --bg: #161615; --panel: #1e1e1c; --side: #1a1a18; --line: #2c2c29; --line-strong: #3a3a36;
   --text: #ecebe6; --muted: #a09f97; --faint: #6f6e67;
   --accent: #7b8cff; --accent-soft: #262b4a; --accent-text: #aab6ff;
-  --ok: #4cc38a; --idle: #5c5b55; --warn: #e0a83a;
+  --ok: #4cc38a; --idle: #5c5b55; --warn: #e0a83a; --danger: #ef6a5f;
   --mark: #5a4e14; --user: #262624; --shadow: none;
 }
 * { box-sizing: border-box; }
@@ -118,6 +118,19 @@ section.preview { overflow-y: auto; background: var(--panel); }
 .btn:hover { background: var(--bg); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 .btn.primary:hover { filter: brightness(1.08); background: var(--accent); }
+.btn.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--line-strong)); }
+.btn.danger.primary { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn.danger.primary:hover { background: var(--danger); }
+.btn.sm { height: 26px; padding: 0 9px; font-size: 12px; }
+.btn:disabled { opacity: .5; }
+.pick-bar { margin-left: auto; display: flex; gap: 6px; align-items: center; font-size: 12.5px; color: var(--muted); }
+.check { width: 15px; height: 15px; flex: none; border: 1.5px solid var(--line-strong); border-radius: 4px; background: var(--panel); display: inline-grid; place-items: center; font-size: 11px; line-height: 1; color: #fff; }
+.check.on, .check.part { background: var(--accent); border-color: var(--accent); }
+.check.on::after { content: "✓"; }
+.check.part::after { content: "–"; }
+.check.off { opacity: .35; }
+.card.pick .summary, .card.pick .meta, .card.pick .reason { margin-left: 23px; }
+.card.picked { background: var(--accent-soft); }
 .summary-box { border-left: 3px solid var(--accent); padding: 4px 0 4px 12px; margin-bottom: 20px; color: var(--text); }
 .summary-box .lbl { font-size: 11px; color: var(--faint); font-weight: 600; letter-spacing: .5px; }
 .pv h3 { font-size: 12px; color: var(--faint); letter-spacing: .5px; margin: 0 0 10px; font-weight: 600; }
@@ -302,6 +315,8 @@ const state = {
   scope: { kind: "all" }, openProjects: new Set(), selected: null, collapsed: new Set(["frag"]),
   editing: false, tx: new Map(), pvKey: null, loaded: false, ai: null,
   aiModel: "", models: [], chatOnly: false,
+  /** Select mode for batch delete; only picks still in the visible list count. */
+  picking: false, picked: new Set(),
 };
 try { const p = JSON.parse(localStorage.getItem("pi-sessions-prefs") || "{}"); if (p.titleMode) state.titleMode = p.titleMode; if (p.aiModel) state.aiModel = p.aiModel; if (p.chatOnly) state.chatOnly = true; } catch {}
 document.getElementById("app").classList.toggle("chat-only", state.chatOnly);
@@ -389,6 +404,14 @@ const L = {
     alreadyCurrent: "已经是当前会话",
     unpinned: "已取消置顶", pinnedDone: "已置顶", unarchived: "已取消归档", archivedDone: "已归档（默认列表中隐藏，可在「已归档」里找到）",
     organizeCancelled: "已取消剩余的整理", renamed: "已重命名，pi 的 /resume 里也会显示新标题",
+    del: "删除", delCurrentTip: "pi 正在使用这个会话，不能删除", pickMode: "选择", pickModeTip: "选择多个会话批量删除（Esc 退出）", pickDone: "完成",
+    pickedN: n => `已选 ${n} 个`, pickAll: "全选", pickNone: "全不选", delN: n => `删除 ${n} 个`, pickGroupTip: "选择这一组",
+    delConfirm: (n, name, dir, days) => `删除${name ? `「${name}」` : ` ${n} 个会话`}？\n\n· 会话文件会移到回收站：${dir}\n· ${days} 天内可以把文件移回会话目录恢复，之后自动清除\n· 这些会话的 AI 标题、摘要、标签、置顶等会一并清除`,
+    delDone: n => `已删除 ${n} 个会话，文件已移到回收站`, delSkipped: " · 正在使用的会话已跳过", delFailed: (n, e) => ` · ${n} 个删除失败：${e}`,
+    delNothing: "pi 正在使用这个会话，不能删除", trash: "回收站", trashSub: "删除的会话移到这里",
+    trashMeta: (n, days) => `${n} 个会话 · 删除 ${days} 天后自动清除`,
+    trashFine: "每个会话文件保留原名，放在原项目文件夹同名的子文件夹里。要恢复，把文件移回「对话文件」对应的目录。每次运行 /sessions 时清除删除超过期限的文件。",
+    emptyTrash: n => `清空回收站（${n} 个）`, emptyConfirm: n => `永久删除回收站里的 ${n} 个会话？\n\n清空后无法恢复。`, emptied: "回收站已清空",
   },
   en: {
     title: "pi Sessions", brand: "Sessions", searchPh: "Search, or @project #tag last-week aug",
@@ -450,6 +473,14 @@ const L = {
     alreadyCurrent: "This is already the current session",
     unpinned: "Unpinned", pinnedDone: "Pinned", unarchived: "Unarchived", archivedDone: "Archived (hidden from the default list; find it under Archived)",
     organizeCancelled: "Cancelled the remaining jobs", renamed: "Renamed; pi's /resume shows the new title too",
+    del: "Delete", delCurrentTip: "pi is using this session, so it can't be deleted", pickMode: "Select", pickModeTip: "Select several sessions to delete them together (Esc to exit)", pickDone: "Done",
+    pickedN: n => `${n} selected`, pickAll: "Select all", pickNone: "Select none", delN: n => `Delete ${n}`, pickGroupTip: "Select this group",
+    delConfirm: (n, name, dir, days) => `Delete ${name ? `"${name}"` : `${n} sessions`}?\n\n· The session files move to the trash folder: ${dir}\n· For ${days} days you can move a file back to its session folder to restore it; after that it is removed\n· Their AI titles, summaries, tags, pins and so on are removed too`,
+    delDone: n => `Deleted ${n} session${n === 1 ? "" : "s"}; the files are in the trash folder`, delSkipped: " · skipped the session pi is using", delFailed: (n, e) => ` · ${n} failed: ${e}`,
+    delNothing: "pi is using this session, so it can't be deleted", trash: "Trash", trashSub: "deleted sessions go here",
+    trashMeta: (n, days) => `${n} session${n === 1 ? "" : "s"} · removed ${days} days after deletion`,
+    trashFine: "Each session file keeps its name, in a subfolder named after its original project folder. To restore one, move the file back to the matching folder under Conversation files. Files past the limit are removed each time you run /sessions.",
+    emptyTrash: n => `Empty trash (${n})`, emptyConfirm: n => `Permanently delete the ${n} session${n === 1 ? "" : "s"} in the trash?\n\nThis cannot be undone.`, emptied: "Trash emptied",
   },
 }[LANG];
 function applyStatic() {
@@ -628,10 +659,11 @@ function scopeTitle() {
   return { all: L.allSessions, active: L.active7, pinned: L.pinned, archived: L.archived }[sc.kind];
 }
 function card(s, pq, showProj, line) {
+  const pick = state.picking && !state.ai, picked = pick && state.picked.has(s.id);
   const snip = pq.words.length ? state.hits?.get(s.id) : null, sum = snip || s.meta.summary || (state.titleMode === "ai" && s.meta.title ? s.firstUser : "");
   const raw = !(state.titleMode === "ai" && s.meta.title) && !s.name;
-  return `<button class="card${state.selected === s.id ? " on" : ""}" data-id="${esc(s.id)}">
-    <div class="row1"><span class="dot${active(s) ? " active" : ""}" title="${active(s) ? L.activeTip : L.idleTip}"></span>
+  return `<button class="card${state.selected === s.id && !pick ? " on" : ""}${pick ? " pick" : ""}${picked ? " picked" : ""}" data-id="${esc(s.id)}"${pick && isCurrent(s) ? ` title="${esc(L.delCurrentTip)}"` : ""}>
+    <div class="row1">${pick ? `<span class="check${picked ? " on" : isCurrent(s) ? " off" : ""}"></span>` : `<span class="dot${active(s) ? " active" : ""}" title="${active(s) ? L.activeTip : L.idleTip}"></span>`}
       <span class="title${raw ? " raw" : ""}">${highlight(title(s), pq.words)}</span>
       ${isCurrent(s) ? `<span class="chip" style="font-size:11px">${esc(L.current)}</span>` : ""}
       ${s.meta.pinned ? `<span class="pin">📌</span>` : ""}
@@ -725,7 +757,11 @@ function renderStorage(error = "", imgError = "") {
       <form class="move" id="imgForm"><input id="imgDir" placeholder="${esc(L.imgPh)}" autocomplete="off" spellcheck="false"><button class="btn">${esc(L.useExportDir)}</button></form>
       ${imgError ? `<p class="err">${esc(imgError)}</p>` : ""}
       <p class="fine">${L.imgFine}${st.images.isDefault ? "" : ` <button data-st="img-reset">${esc(L.restoreDefault)}</button>`}</p>
-      ${st.images.count ? `<button class="btn primary" data-st="export-all">${esc(L.exportAll)}</button>` : ""}</section>`;
+      ${st.images.count ? `<button class="btn primary" data-st="export-all">${esc(L.exportAll)}</button>` : ""}</section>
+    ${st.trash?.count ? `<section><h3>${esc(L.trash)}<span class="sub">${esc(L.trashSub)}</span></h3>
+      <div class="loc"><div><div class="path">${esc(tilde(st.trash.dir))}</div><div class="loc-meta">${esc(L.trashMeta(st.trash.count, st.trash.days))}</div></div>${openBtn(st.trash.dir)}</div>
+      <p class="fine">${esc(L.trashFine)}</p>
+      <button class="btn danger" data-st="empty-trash" style="margin-top:10px">${esc(L.emptyTrash(st.trash.count))}</button></section>` : ""}`;
 }
 async function moveData(dir) {
   const label = dir || tilde(state.storage.data.defaultDir);
@@ -744,6 +780,10 @@ $("storage").addEventListener("click", async e => {
   if (a === "copy") { try { await navigator.clipboard.writeText(SESSION_DIR_EXAMPLE); toast(L.copied); } catch { prompt(L.copyThis, SESSION_DIR_EXAMPLE); } }
   if (a === "reset") moveData("");
   if (a === "img-reset") setImageDir("");
+  if (a === "empty-trash") {
+    if (!confirm(L.emptyConfirm(state.storage.trash.count))) return;
+    try { state.storage = await api("/api/trash/empty", {}); renderStorage(); toast(L.emptied); } catch (err) { toast(err.message); }
+  }
   if (a === "export-all") {
     b.disabled = true; b.innerHTML = `<span class="spin"></span>${esc(L.exporting)}`;
     try { toast(exportedMsg(await api("/api/images/export", { reveal: true }))); } catch (err) { toast(err.message); }
@@ -780,13 +820,21 @@ function renderList() {
   const showProj = !["project", "bucket"].includes(state.scope.kind);
   let h = "";
   if (state.error) h += `<div class="banner" style="background:color-mix(in srgb, var(--warn) 18%, transparent)">${esc(state.error)}</div>`;
-  h += `<div class="list-head"><h2>${esc(state.q ? L.searchResults : scopeTitle())}</h2><span class="sub">${esc(L.nSessions(list.length))}</span>
+  const picked = pickedVisible(), pickable = list.filter(s => !isCurrent(s));
+  const bar = !state.picking ? (list.length ? `<div class="pick-bar"><button class="btn sm" data-pick="on" title="${esc(L.pickModeTip)}">${esc(L.pickMode)}</button></div>` : "") :
+    `<div class="pick-bar">${esc(L.pickedN(picked.length))}
+      <button class="btn sm" data-pick="${picked.length && picked.length === pickable.length ? "none" : "all"}">${esc(picked.length && picked.length === pickable.length ? L.pickNone : L.pickAll)}</button>
+      <button class="btn sm danger primary" data-pick="delete"${picked.length ? "" : " disabled"}>${esc(L.delN(picked.length))}</button>
+      <button class="btn sm" data-pick="off">${esc(L.pickDone)}</button></div>`;
+  h += `<div class="list-head"><h2>${esc(state.q ? L.searchResults : scopeTitle())}</h2><span class="sub">${esc(L.nSessions(list.length))}</span>${bar}
     ${pq.labels.length ? `<div class="chips">${pq.labels.map(l => `<span class="chip">${esc(l)}</span>`).join("")}</div>` : ""}</div>`;
   if (!state.sessions.length) h += `<div class="empty">${esc(L.noSessions)}<br><span style="font-size:12.5px">${esc(L.noSessionsHint)}</span></div>`;
   else if (!list.length) h += `<div class="empty">${esc(L.noMatch)}<br><span style="font-size:12.5px">${esc(L.noMatchHint)}</span></div>`;
   for (const g of gs) {
     const col = state.collapsed.has(g.key);
-    h += `<div class="group"><button class="group-title" data-group="${esc(g.key)}"><span class="caret${col ? "" : " open"}">▸</span>${esc(g.label)}<span class="num">${g.items.length}</span><span class="line"></span></button>`;
+    const own = g.items.filter(s => !isCurrent(s)), n = own.filter(s => state.picked.has(s.id)).length;
+    const check = state.picking && own.length ? `<span class="check${n === own.length ? " on" : n ? " part" : ""}" data-pick-group="${esc(g.key)}" title="${esc(L.pickGroupTip)}"></span>` : "";
+    h += `<div class="group"><button class="group-title" data-group="${esc(g.key)}">${check}<span class="caret${col ? "" : " open"}">▸</span>${esc(g.label)}<span class="num">${g.items.length}</span><span class="line"></span></button>`;
     if (!col) for (const s of g.items) h += card(s, pq, showProj);
     h += `</div>`;
   }
@@ -969,6 +1017,7 @@ function headHtml(s) {
       ${s.images ? `<button class="btn" data-act="export-images" title="${esc(L.exportTip)}">${esc(L.exportN(s.images))}</button>` : ""}
       <button class="btn" data-act="organize" ${organizing ? "disabled style='opacity:.5'" : ""}>✨ ${esc(s.meta.organizedAt ? L.regenerate : L.aiTitleBtn)}</button>
       <button class="btn focus-btn" data-act="reading" title="${esc(L.focusTip)}">${esc(reading ? L.exitFocus : L.focus)}</button>
+      <button class="btn danger" data-act="delete"${isCurrent(s) ? ` disabled title="${esc(L.delCurrentTip)}"` : ""}>${esc(L.del)}</button>
     </div>
     ${s.meta.summary ? `<div class="summary-box"><div class="lbl">${esc(L.summary)}</div>${highlight(s.meta.summary, pq.words)}</div>` : ""}
     <dl class="facts">
@@ -1046,6 +1095,23 @@ async function organize(ids) {
   try { state.organize = (await api("/api/organize", { ids, model: state.aiModel || undefined })).organize; renderHeader(); refresh(); }
   catch (e) { toast(e.message); }
 }
+const pickedVisible = () => state.ai ? [] : visible().filter(s => state.picked.has(s.id));
+function setPicking(on) { state.picking = on; state.picked.clear(); renderList(); }
+async function deleteSessions(list) {
+  const ids = list.filter(s => !isCurrent(s)).map(s => s.id);
+  if (!ids.length) return toast(L.delNothing);
+  let trash;
+  try { trash = (await api("/api/storage")).trash; } catch (e) { return toast(e.message); }
+  if (!confirm(L.delConfirm(ids.length, ids.length === 1 ? title(list.find(s => s.id === ids[0])) : "", tilde(trash.dir), trash.days))) return;
+  try {
+    const r = await api("/api/delete", { ids }), gone = new Set(r.deleted);
+    state.sessions = state.sessions.filter(s => !gone.has(s.id));
+    for (const id of gone) { state.picked.delete(id); state.tx.delete(id); }
+    if (!pickedVisible().length) state.picking = false;
+    toast(L.delDone(r.deleted.length) + (r.skipped.length ? L.delSkipped : "") + (r.failed.length ? L.delFailed(r.failed.length, r.failed[0].error) : ""));
+    renderSide(); afterFilter(); refresh();
+  } catch (e) { toast(e.message); }
+}
 async function act(a) {
   const s = state.sessions.find(x => x.id === state.selected);
   if (a === "back") { $("app").classList.remove("detail"); return; }
@@ -1061,6 +1127,7 @@ async function act(a) {
   if (a === "archive") mutate({ id: s.id, archived: !s.meta.archived }, s.meta.archived ? L.unarchived : L.archivedDone);
   if (a === "organize") organize([s.id]);
   if (a === "export-images") exportSessionImages(s);
+  if (a === "delete") deleteSessions([s]);
 }
 
 // ---- 事件 ----
@@ -1084,10 +1151,32 @@ document.addEventListener("change", e => { if (e.target.id !== "chat-only") retu
 $("aiModel").addEventListener("change", e => { state.aiModel = e.target.value; savePrefs(); renderHeader(); });
 $("list").addEventListener("click", e => {
   const a = e.target.closest("[data-ai]"); if (a) { if (a.dataset.ai === "exit") exitAi(); else $("organize").click(); return; }
+  const p = e.target.closest("[data-pick]");
+  if (p) {
+    const v = p.dataset.pick;
+    if (v === "on" || v === "off") setPicking(v === "on");
+    if (v === "all") { for (const s of visible()) if (!isCurrent(s)) state.picked.add(s.id); renderList(); }
+    if (v === "none") { state.picked.clear(); renderList(); }
+    if (v === "delete") deleteSessions(pickedVisible());
+    return;
+  }
+  const pg = e.target.closest("[data-pick-group]");
+  if (pg) {
+    const own = groups(visible()).find(x => x.key === pg.dataset.pickGroup)?.items.filter(s => !isCurrent(s)) ?? [];
+    const all = own.every(s => state.picked.has(s.id));
+    for (const s of own) all ? state.picked.delete(s.id) : state.picked.add(s.id);
+    renderList(); return;
+  }
   const g = e.target.closest("[data-group]"); if (g) { const k = g.dataset.group; state.collapsed.has(k) ? state.collapsed.delete(k) : state.collapsed.add(k); renderList(); return; }
-  const c = e.target.closest("[data-id]"); if (c) select(c.dataset.id, true);
+  const c = e.target.closest("[data-id]"); if (!c) return;
+  if (state.picking && !state.ai) {
+    const s = state.sessions.find(x => x.id === c.dataset.id);
+    if (s && !isCurrent(s)) { state.picked.has(s.id) ? state.picked.delete(s.id) : state.picked.add(s.id); renderList(); }
+    return;
+  }
+  select(c.dataset.id, true);
 });
-$("list").addEventListener("dblclick", e => { if (e.target.closest("[data-id]")) act("open"); });
+$("list").addEventListener("dblclick", e => { if (e.target.closest("[data-id]") && !(state.picking && !state.ai)) act("open"); });
 $("preview").addEventListener("click", e => {
   const g = e.target.closest("[data-goto]"); if (g) { select(g.dataset.goto); return; }
   const c = e.target.closest("[data-copy]");
@@ -1124,6 +1213,7 @@ document.addEventListener("keydown", e => {
   if (e.key === "Enter" && e.shiftKey && e.target.id === "q" && !e.isComposing) { e.preventDefault(); ask(); return; }
   if (e.key === "Escape" && $("app").classList.contains("reading") && e.target.tagName !== "INPUT") { act("reading"); return; }
   if (e.key === "Escape" && state.ai) { exitAi(); return; }
+  if (e.key === "Escape" && state.picking && e.target.tagName !== "INPUT") { setPicking(false); return; }
   if (e.key === "Escape" && e.target.id === "q") { if (state.q) { state.q = ""; e.target.value = ""; runSearch(); } else e.target.blur(); return; }
   if (typing && e.target.id !== "q") return;
   if (e.isComposing) return;
@@ -1133,6 +1223,10 @@ document.addEventListener("keydown", e => {
     select(ids[i < 0 ? 0 : n]);
   }
   if (e.key === "Enter" && state.selected && !state.editing) act("open");
+  if (e.key === "Delete" && !typing) {
+    if (state.picking && !state.ai) { const list = pickedVisible(); if (list.length) deleteSessions(list); }
+    else if (state.selected) act("delete");
+  }
 });
 // Also pick up models configured in pi (/login, models.json) while the page was in the background.
 document.addEventListener("visibilitychange", () => { if (!document.hidden) { refresh(); loadModels(); } });

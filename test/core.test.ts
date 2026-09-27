@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile, appendFile, utimes } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, rm, stat, writeFile, appendFile, utimes } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -15,6 +15,7 @@ import { activeBranch, buildTranscript, findImage, firstMatch, toolSummary } fro
 import { planFocus, runFocus, windowsScript } from "../src/focus.ts";
 import { DataLocation, expandDir } from "../src/storage.ts";
 import { folderName, sessionImages } from "../src/export.ts";
+import { moveToTrash, purgeTrash, trashCount, TRASH_DAYS } from "../src/trash.ts";
 
 async function temp(t: any): Promise<string> { const dir = await mkdtemp(join(tmpdir(), "pi-sessions-test-")); t.after(() => rm(dir, { recursive: true, force: true })); return dir; }
 /** Sessions API routes are mounted under /api/sessions/ on the pi-web hub. */
@@ -546,4 +547,59 @@ test("english pages: errors, transcript notes, ask reasons and exported file nam
   assert.match(prompt, /reason 用英文写/);
   await askSessions(ctx, "scroll", records, {}, new AbortController().signal, new Date(), "zh");
   assert.doesNotMatch(prompt, /用英文写/);
+});
+
+test("server deletes one or many sessions into the trash, never the current one", async t => {
+  const root = await temp(t), sessions = join(root, "sessions"), dir = join(sessions, "--w--"), data = join(root, "data");
+  await mkdir(dir, { recursive: true });
+  for (const id of ["a", "b", "c", "cur"]) await writeFile(join(dir, `${id}.jsonl`), sessionFile(id, "/w", [["user", `hi ${id}`]]));
+  await writeFile(join(root, "index.html"), "");
+  const token = "c".repeat(32), trash = join(data, "trash");
+  const server = new SessionsServer({ root: sessions, metaFile: join(data, "meta.json"), webFile: join(root, "index.html"), token });
+  server.binding = { currentSessionFile: () => join(dir, "cur.jsonl"), model: () => undefined, open: async () => ({ ok: true, message: "" }), rename: async () => {} };
+  const base = new URL(await server.start()).origin;
+  t.after(() => server.close());
+  const call = (path: string, body?: object) => fetch(base + api(path), body ? { method: "POST", headers: { "x-token": token, "content-type": "application/json", "x-lang": "en" }, body: JSON.stringify(body) } : { headers: { "x-token": token } });
+  await server.meta.patch("a", { title: "keep?", pinned: true });
+  await server.meta.patch("b", { tags: ["x"] });
+
+  assert.equal((await call("/api/delete", { ids: [] })).status, 400);
+  const one = await (await call("/api/delete", { ids: ["a"] })).json();
+  assert.deepEqual(one, { deleted: ["a"], skipped: [], failed: [], trash });
+  assert.equal(await readFile(join(trash, "--w--", "a.jsonl"), "utf8"), sessionFile("a", "/w", [["user", "hi a"]]), "the file is moved, not rewritten");
+  assert.deepEqual(await server.meta.get("a"), {}, "its meta is forgotten");
+
+  // A later session file with the same name does not overwrite the one already in the trash.
+  await writeFile(join(dir, "a.jsonl"), sessionFile("a2", "/w", [["user", "again"]]));
+  const many = await (await call("/api/delete", { ids: ["a2", "b", "c", "cur", "nope", "b"] })).json();
+  assert.deepEqual(many.deleted, ["a2", "b", "c"]);
+  assert.deepEqual(many.skipped, ["cur"], "the session pi has open is kept");
+  assert.deepEqual(many.failed, [{ id: "nope", error: "Session not found; it may have been deleted" }]);
+  assert.match(await readFile(join(trash, "--w--", "a-2.jsonl"), "utf8"), /"a2"/);
+  assert.deepEqual(await server.meta.get("b"), {});
+  assert.deepEqual((await (await call("/api/sessions")).json()).sessions.map((s: any) => s.id), ["cur"]);
+  const st = await (await call("/api/storage")).json();
+  assert.deepEqual(st.trash, { dir: trash, exists: true, count: 4, days: 30 });
+
+  const emptied = await (await call("/api/trash/empty", {})).json();
+  assert.equal(emptied.trash.count, 0);
+  assert.deepEqual(await readdir(trash), [], "empty folders are removed too");
+});
+
+test("trash: deletion time is the file's mtime, and only files past the limit are purged", async t => {
+  const root = await temp(t), dir = join(root, "sessions", "--w--"), trash = join(root, "trash");
+  await mkdir(dir, { recursive: true });
+  for (const id of ["old", "new"]) {
+    await writeFile(join(dir, `${id}.jsonl`), sessionFile(id, "/w", [["user", id]]));
+    await utimes(join(dir, `${id}.jsonl`), new Date("2020-01-01"), new Date("2020-01-01"));
+  }
+  const oldPath = await moveToTrash(join(dir, "old.jsonl"), trash), newPath = await moveToTrash(join(dir, "new.jsonl"), trash);
+  assert.ok((await stat(newPath)).mtimeMs > Date.parse("2025-01-01"), "a long-idle session is not purged right after deletion");
+  await utimes(oldPath, new Date(Date.now() - 31 * 864e5), new Date(Date.now() - 31 * 864e5));
+  await writeFile(join(trash, "note.txt"), "mine");
+  assert.equal(await trashCount(trash), 2);
+  assert.equal(await purgeTrash(trash, Date.now() - TRASH_DAYS * 864e5), 1);
+  assert.deepEqual(await readdir(join(trash, "--w--")), ["new.jsonl"]);
+  assert.equal(await purgeTrash(trash), 1);
+  assert.deepEqual(await readdir(trash), ["note.txt"], "only session files and their emptied folders are removed");
 });
