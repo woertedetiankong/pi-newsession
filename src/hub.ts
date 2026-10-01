@@ -1,10 +1,13 @@
 /**
  * pi-web hub: one local web server shared by several pi extensions (pi-sessions, pi-kb, ...).
  *
- * KEEP THIS FILE IDENTICAL in every package that ships it. Packages load with separate
- * module roots, so each carries its own copy; they meet through globalThis.__piWebHub and
- * only the WebHub / WebApp contract below (checked structurally, never with instanceof).
- * Change the contract only in backward-compatible ways, and bump HUB_VERSION when adding to it.
+ * KEEP THIS FILE IDENTICAL in every package that ships it (pi-kb's scripts/sync-hub.mjs copies it
+ * and checks the copies). Packages load with separate module roots, so each carries its own copy;
+ * they meet through globalThis.__piWebHub and only the WebHub / WebApp contract below (checked
+ * structurally, never with instanceof). Change the contract only in backward-compatible ways.
+ *
+ * Bump HUB_VERSION on every change to this file: the newest copy loaded takes over from an older
+ * one (see sharedHub), whichever package pi happened to load first.
  *
  * Layout: /<app>/ serves the app's page, /api/<app>/... its API (token required),
  * /hub.js the shared client (token, language, app switcher), / redirects to the first app.
@@ -16,7 +19,7 @@ import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Serv
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 
-export const HUB_VERSION = 1;
+export const HUB_VERSION = 2;
 export const DEFAULT_PORT = 47291;
 
 export type WebLanguage = "zh" | "en";
@@ -103,6 +106,8 @@ export interface HubOptions {
   port?: number;
   /** Start as soon as the first app mounts (the server was running before a reload). */
   resume?: boolean;
+  /** An older hub being taken over: wait for it to close, then listen on the port it had. */
+  replacing?: Promise<number | undefined>;
 }
 
 /**
@@ -112,19 +117,40 @@ export interface HubOptions {
  */
 const shared = globalThis as typeof globalThis & { __piWebHub?: WebHub; __piWebResume?: number };
 
-/** The process-wide hub, created on first use. */
+/** The process-wide hub, created on first use; a newer copy of this file takes over an older hub. */
 export function sharedHub(agentDir: string): WebHub {
   const existing = shared.__piWebHub;
-  if (existing && typeof existing.mount === "function" && existing.version >= 1) return existing;
+  const valid = existing && typeof existing.mount === "function" && typeof existing.version === "number";
+  if (valid && existing.version >= HUB_VERSION) return existing;
+  // Read before taking over: from then on the old hub forwards to the new one.
+  const apps = valid ? existing.apps() : [];
   const resume = shared.__piWebResume;
   shared.__piWebResume = undefined;
-  const hub = new Hub({ agentDir, port: resume, resume: resume !== undefined }, port => {
+  const hub: Hub = new Hub({ agentDir, port: resume, resume: resume !== undefined, ...(valid ? takeOver(existing, () => hub) : {}) }, port => {
     if (shared.__piWebHub !== hub) return;
     shared.__piWebHub = undefined;
     shared.__piWebResume = port;
   });
   shared.__piWebHub = hub;
+  for (const app of apps) hub.mount(app);
   return hub;
+}
+
+/**
+ * Take over from an older hub: it stops listening (once a start in progress is done), and every
+ * method of it forwards to the new one from now on, because packages keep the hub they got
+ * (pi-sessions holds it for its whole life). The new hub starts on the same port if the old one ran.
+ */
+function takeOver(old: WebHub, next: () => WebHub): Pick<HubOptions, "resume" | "replacing"> {
+  // Our own fields, from any earlier copy of this file; another implementation just has none.
+  const inner = old as unknown as { server?: unknown; starting?: unknown; port?: unknown };
+  const running = inner.server !== undefined || inner.starting !== undefined;
+  const closing = old.close();
+  const forward = <K extends "mount" | "unmount" | "apps" | "start" | "url" | "close">(name: K) =>
+    Object.defineProperty(old, name, { configurable: true, value: (...args: unknown[]) => (next()[name] as (...a: unknown[]) => unknown)(...args) });
+  for (const name of ["mount", "unmount", "apps", "start", "url", "close"] as const) forward(name);
+  const replacing = closing.then(() => (typeof inner.port === "number" && inner.port ? inner.port : undefined), () => undefined);
+  return { resume: running, replacing };
 }
 
 /** A private hub, for tests. */
@@ -196,13 +222,15 @@ class Hub implements WebHub {
   }
 
   private async listen(): Promise<void> {
+    // Taking over: the old hub lets go of its port first, and this one picks it up.
+    const inherited = await this.options.replacing;
     this.token ??= loadToken(this.options.agentDir);
     const server = createServer((req, res) => { void this.handle(req, res); });
     const listen = (port: number) => new Promise<void>((resolve, reject) => {
       server.once("error", reject);
       server.listen(port, "127.0.0.1", () => { server.off("error", reject); resolve(); });
     });
-    try { await listen(this.options.port ?? DEFAULT_PORT); } catch { await listen(0); }
+    try { await listen(inherited ?? this.options.port ?? DEFAULT_PORT); } catch { await listen(0); }
     // Never keep pi alive just for the page.
     server.unref();
     this.server = server;
