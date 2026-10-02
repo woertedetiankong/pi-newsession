@@ -1,4 +1,5 @@
-import { readFile, stat } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { copyFile, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { type Lang, LocalizedError, localize, type MessageKey, requestLang } from "./i18n.ts";
@@ -11,6 +12,8 @@ import { checkWritable, DEFAULT_IMAGE_DIR, expandDir, openPath, type DataLocatio
 import { exportImages } from "./export.ts";
 import { moveToTrash, purgeTrash, trashCount, TRASH_DAYS } from "./trash.ts";
 import { buildTranscript, findImage, firstMatch, type TranscriptItem } from "./transcript.ts";
+import { buildReview, type ReviewTask } from "./review.ts";
+import { ExplanationStore, explainTask } from "./explain.ts";
 
 /** What the server needs from the live pi runtime; replaced on every session_start. */
 export interface Binding {
@@ -146,6 +149,8 @@ export class SessionsServer implements WebApp {
     try { await checkWritable(target); } catch (e) { throw withStatus(e, 400); }
     const from = await this.currentMeta(), to = new MetaStore(join(target, "meta.json"));
     await to.mergeFrom(from);
+    // Review explanations travel with meta.json; one already in the new folder wins.
+    await copyFile(join(dirname(from.file), "explanations.json"), join(target, "explanations.json"), fsConstants.COPYFILE_EXCL).catch(() => {});
     await loc.set(target);
     this.meta = to;
   }
@@ -197,6 +202,18 @@ export class SessionsServer implements WebApp {
     return items;
   }
 
+  private reviews = new Map<string, { version: string; cwd?: string; tasks: ReviewTask[] }>();
+  private async review(path: string): Promise<{ cwd?: string; tasks: ReviewTask[] }> {
+    const s = await stat(path), version = `${s.mtimeMs}:${s.size}`, hit = this.reviews.get(path);
+    if (hit?.version === version) return hit;
+    const review = { version, ...buildReview(await readFile(path, "utf8")) };
+    this.reviews.delete(path); this.reviews.set(path, review);
+    while (this.reviews.size > 5) this.reviews.delete(this.reviews.keys().next().value!);
+    return review;
+  }
+  /** Explanations live next to meta.json, so they move with it. */
+  private explanations(): ExplanationStore { return new ExplanationStore(join(dirname(this.meta.file), "explanations.json")); }
+
   private async organize(id: string, signal: AbortSignal): Promise<void> {
     const ctx = this.binding?.model();
     if (!ctx) throw new LocalizedError("switching");
@@ -233,6 +250,24 @@ export class SessionsServer implements WebApp {
       const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit")) || 40));
       const words = (url.searchParams.get("q") ?? "").toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
       return { id: r.id, total: items.length, offset, items: items.slice(offset, offset + limit), firstMatch: offset === 0 ? firstMatch(items, words) : undefined };
+    }
+    if (method === "GET" && p === "/api/review") {
+      const r = await this.find(url.searchParams.get("id"));
+      const review = await this.review(r.path).catch(() => { throw httpError(404, "readFailed"); });
+      return { id: r.id, cwd: review.cwd, tasks: review.tasks, explanations: await this.explanations().forSession(r.id) };
+    }
+    if (method === "POST" && p === "/api/review/explain") {
+      const r = await this.find(body.id);
+      const ctx = this.binding?.model();
+      if (!ctx) throw httpError(503, "switching");
+      const model = typeof body.model === "string" && body.model ? pickModel(ctx, body.model) : ctx.model;
+      if (!model) throw httpError(409, "noModel");
+      const review = await this.review(r.path).catch(() => { throw httpError(404, "readFailed"); });
+      const task = review.tasks.find(t => t.n === Number(body.n));
+      if (!task) throw httpError(404, "taskNotFound");
+      const explanation = await explainTask({ model, modelRegistry: ctx.modelRegistry }, task, review.cwd, signal, lang);
+      await this.explanations().save(r.id, task.n, explanation);
+      return { explanation };
     }
     if (method === "GET" && p === "/api/image") {
       const r = await this.find(url.searchParams.get("id"));

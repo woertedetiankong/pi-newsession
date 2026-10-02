@@ -134,6 +134,45 @@ section.preview { overflow-y: auto; background: var(--panel); }
 .summary-box { border-left: 3px solid var(--accent); padding: 4px 0 4px 12px; margin-bottom: 20px; color: var(--text); }
 .summary-box .lbl { font-size: 11px; color: var(--faint); font-weight: 600; letter-spacing: .5px; }
 .pv h3 { font-size: 12px; color: var(--faint); letter-spacing: .5px; margin: 0 0 10px; font-weight: 600; }
+.pv-tabs { display: flex; align-items: center; gap: 4px; margin: 0 0 12px; border-bottom: 1px solid var(--line); }
+.pv-tabs button { font: inherit; font-size: 13px; font-weight: 600; color: var(--muted); background: none; border: 0; border-bottom: 2px solid transparent; padding: 6px 10px; margin-bottom: -1px; cursor: pointer; }
+.pv-tabs button[aria-selected="true"] { color: var(--accent-text); border-bottom-color: var(--accent); }
+.pv-tabs .sub { font-size: 12px; color: var(--faint); font-weight: 400; margin-right: auto; }
+.pv-tabs .chat-toggle { margin-left: auto; }
+.rv-lead { font-size: 12.5px; color: var(--faint); margin: 0 0 12px; }
+.task { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; background: var(--panel); }
+.task .q { font-weight: 600; display: flex; gap: 8px; }
+.task .q .num { color: var(--faint); font-weight: 500; flex: none; }
+.task .q .txt { overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.task .meta { font-size: 12px; color: var(--faint); margin: 4px 0 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.chips span { font-size: 12px; border-radius: 999px; padding: 1px 9px; background: var(--bg); border: 1px solid var(--line); }
+.chips .ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+.chips .bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+.task details { border-top: 1px solid var(--line); padding: 7px 0; }
+.task details > summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+.task details[open] > summary { margin-bottom: 6px; }
+.file-sum { font-family: var(--mono); font-size: 12px; }
+.badge { font: 11px var(--sans); border-radius: 999px; padding: 0 7px; margin-left: 6px; border: 1px solid var(--line-strong); color: var(--muted); }
+.badge.warn { color: var(--danger); border-color: var(--danger); }
+.diff { font: 12px/1.45 var(--mono); background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 6px 0; overflow-x: auto; margin: 4px 0 8px; max-height: 460px; overflow-y: auto; }
+.diff div { padding: 0 10px; white-space: pre; }
+.diff .add { background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.diff .del { background: color-mix(in srgb, var(--danger) 13%, transparent); }
+.diff .hunk { color: var(--faint); }
+.cmd { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; padding: 2px 0; }
+.cmd .k { font-size: 11px; border-radius: 4px; padding: 0 5px; background: var(--bg); border: 1px solid var(--line); color: var(--muted); flex: none; }
+.cmd code { font: 12px var(--mono); overflow-wrap: anywhere; }
+.cmd .st { flex: none; }
+.cmd.fail .st, .cmd.fail code { color: var(--danger); }
+.cmd-tail { font: 11.5px/1.4 var(--mono); color: var(--danger); background: var(--bg); border-radius: 6px; padding: 4px 8px; margin: 2px 0 6px 0; white-space: pre-wrap; }
+.hyp { font-size: 13px; padding: 3px 0; }
+.hyp .ev { color: var(--faint); font-size: 12px; }
+.explain { background: var(--accent-soft); border-radius: 9px; padding: 10px 12px; margin: 4px 0 10px; font-size: 13.5px; line-height: 1.6; }
+.explain h4 { margin: 8px 0 2px; font-size: 12px; color: var(--accent-text); }
+.explain h4:first-child { margin-top: 0; }
+.explain .learn { background: var(--panel); border-radius: 7px; padding: 6px 9px; margin: 5px 0; }
+.explain .stale { font-size: 12px; color: var(--warn); }
 .msg { margin-bottom: 12px; display: flex; gap: 10px; }
 .msg .who { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; background: var(--user); color: var(--muted); }
 .msg.assistant .who { background: var(--accent-soft); color: var(--accent-text); }
@@ -314,13 +353,13 @@ const state = {
   titleMode: "ai", q: "", hits: null,
   scope: { kind: "all" }, openProjects: new Set(), selected: null, collapsed: new Set(["frag"]),
   editing: false, tx: new Map(), pvKey: null, loaded: false, ai: null,
-  aiModel: "", models: [], chatOnly: false,
+  aiModel: "", models: [], chatOnly: false, pvTab: "chat", rv: new Map(), explaining: new Set(),
   /** Select mode for batch delete; only picks still in the visible list count. */
   picking: false, picked: new Set(),
 };
-try { const p = JSON.parse(localStorage.getItem("pi-sessions-prefs") || "{}"); if (p.titleMode) state.titleMode = p.titleMode; if (p.aiModel) state.aiModel = p.aiModel; if (p.chatOnly) state.chatOnly = true; } catch {}
+try { const p = JSON.parse(localStorage.getItem("pi-sessions-prefs") || "{}"); if (p.titleMode) state.titleMode = p.titleMode; if (p.aiModel) state.aiModel = p.aiModel; if (p.chatOnly) state.chatOnly = true; if (p.pvTab === "review") state.pvTab = "review"; } catch {}
 document.getElementById("app").classList.toggle("chat-only", state.chatOnly);
-const savePrefs = () => { try { localStorage.setItem("pi-sessions-prefs", JSON.stringify({ titleMode: state.titleMode, aiModel: state.aiModel, chatOnly: state.chatOnly })); } catch {} };
+const savePrefs = () => { try { localStorage.setItem("pi-sessions-prefs", JSON.stringify({ titleMode: state.titleMode, aiModel: state.aiModel, chatOnly: state.chatOnly, pvTab: state.pvTab })); } catch {} };
 
 // ---- API ----
 // Routes are written as /api/...; on the shared hub they live under /api/sessions/...
@@ -398,6 +437,17 @@ const L = {
     focusTip: "隐藏会话列表，加宽对话区（Esc 退出）", exitFocus: "⤡ 退出专注", focus: "⤢ 专注阅读",
     summary: "摘要", project: "项目", unknown: "未知", messages: "消息", forkedFrom: "分叉自",
     conversation: "完整对话", conversationSub: "· 当前分支 · 工具调用可点开查看",
+    tabChat: "完整对话", tabReview: "复盘", reviewLead: "按你的每次提问分成任务：AI 改了哪些文件、跑了哪些命令、检查有没有通过。",
+    reviewEmpty: "这个会话还没有任务", reviewLoading: "读取中…", taskQA: "只是问答，没有改动", askedAt: "提问",
+    filesN: (n, a, r) => `${n} 个文件 +${a} −${r}`, checksOk: n => `${n} 项检查通过`, checksFail: n => `${n} 项失败`, flashesN: n => `烧录 ${n} 次`,
+    toolsN: n => `${n} 次工具调用`, minutes: m => m < 1 ? "不到 1 分钟" : `${Math.round(m)} 分钟`,
+    files: "改动的文件", written: "整个写入", editsN: n => `${n} 次修改，按时间顺序，含中间过程`, earlierEdits: n => `前 ${n} 次修改`, outsideProject: "项目外", commands: n => `运行的命令（${n}）`, failedTail: "失败输出",
+    hardware: "硬件调试（pi-lab）", hypotheses: "假设", facts: "观察到的现象", reproduced: "已复现", singleObs: "单次观察",
+    status: { open: "待验证", testing: "验证中", ruled_out: "已排除", confirmed: "已确认" }, finalReply: "AI 的最终回复",
+    explain: "✨ 让 AI 讲解这次改动", explainTip: "用一次模型调用，讲清楚原因、每处改动为什么这样改、怎么验证的，以及能学到什么",
+    explaining: "讲解中…", reexplain: "重新讲解", staleExplain: "会话在讲解之后有更新",
+    exSummary: "总结", exCause: "原因", exChanges: "每处改动", exVerified: "怎么验证的", exLearn: "学到什么",
+    kinds: { test: "测试", build: "编译", flash: "烧录", serial: "串口", git: "git", install: "安装", run: "命令" },
     pickSession: "选择一个会话查看摘要和内容",
     switchingBanner: "pi 正在切换会话，稍后会自动恢复。", tokenExpired: "页面令牌已失效：请在 pi 中运行 /sessions 重新打开。",
     organizeConfirm: (m, n) => `将用 ${m} 为 ${n} 个会话生成标题、摘要和标签。\n\n· 每个会话的开头部分会发送给该模型的服务商\n· 每个会话一次模型请求，会产生额外用量\n\n继续？`,
@@ -467,6 +517,17 @@ const L = {
     focusTip: "Hide the list and widen the conversation (Esc to exit)", exitFocus: "⤡ Exit focus", focus: "⤢ Focus",
     summary: "Summary", project: "Project", unknown: "unknown", messages: "Messages", forkedFrom: "Forked from",
     conversation: "Conversation", conversationSub: "· current branch · click a tool call to expand it",
+    tabChat: "Conversation", tabReview: "Review", reviewLead: "One task per question you asked: which files the AI changed, which commands it ran, whether its checks passed.",
+    reviewEmpty: "No tasks in this session yet", reviewLoading: "Loading…", taskQA: "Questions and answers only, no changes", askedAt: "asked",
+    filesN: (n, a, r) => `${n} file${n > 1 ? "s" : ""} +${a} −${r}`, checksOk: n => `${n} check${n > 1 ? "s" : ""} passed`, checksFail: n => `${n} failed`, flashesN: n => `${n} flash${n > 1 ? "es" : ""}`,
+    toolsN: n => `${n} tool calls`, minutes: m => m < 1 ? "under a minute" : `${Math.round(m)} min`,
+    files: "Files changed", written: "written whole", editsN: n => `${n} edits in order, including intermediate steps`, earlierEdits: n => `the first ${n} edits`, outsideProject: "outside the project", commands: n => `Commands run (${n})`, failedTail: "failure output",
+    hardware: "Hardware debugging (pi-lab)", hypotheses: "Hypotheses", facts: "Observations", reproduced: "reproduced", singleObs: "single observation",
+    status: { open: "open", testing: "testing", ruled_out: "ruled out", confirmed: "confirmed" }, finalReply: "The AI's final reply",
+    explain: "✨ Explain this change", explainTip: "One model call: the cause, why each change was made, how it was verified, and what to learn from it",
+    explaining: "Explaining…", reexplain: "Explain again", staleExplain: "the session changed after this explanation",
+    exSummary: "Summary", exCause: "Cause", exChanges: "Each change", exVerified: "How it was verified", exLearn: "What to learn",
+    kinds: { test: "test", build: "build", flash: "flash", serial: "serial", git: "git", install: "install", run: "command" },
     pickSession: "Select a session to see its summary and conversation",
     switchingBanner: "pi is switching sessions; this recovers automatically.", tokenExpired: "The page token is no longer valid; run /sessions in pi to reopen the page.",
     organizeConfirm: (m, n) => `Use ${m} to write titles, summaries and tags for ${n} sessions?\n\n· The start of each session is sent to that model's provider\n· One model request per session, which adds usage`,
@@ -1028,7 +1089,11 @@ function headHtml(s) {
       ${tags(s).length ? `<dt>${esc(L.tags)}</dt><dd>${tags(s).map(t => `<span class="tag">#${esc(t)}</span>`).join(" ")}</dd>` : ""}
       ${parent ? `<dt>${esc(L.forkedFrom)}</dt><dd><button class="tag" data-goto="${esc(parent.id)}">${esc(title(parent))}</button></dd>` : ""}
     </dl>
-    <h3>${esc(L.conversation)} <span style="font-weight:400">${esc(L.conversationSub)}</span><label class="chat-toggle" title="${esc(L.chatOnlyTip)}"><input type="checkbox" id="chat-only"${state.chatOnly ? " checked" : ""}>${esc(L.chatOnly)}</label></h3>`;
+    <div class="pv-tabs" role="tablist">
+      <button role="tab" data-tab="chat" aria-selected="${state.pvTab === "chat"}">${esc(L.tabChat)}</button>
+      <button role="tab" data-tab="review" aria-selected="${state.pvTab === "review"}">${esc(L.tabReview)}</button>
+      ${state.pvTab === "chat" ? `<span class="sub">${esc(L.conversationSub)}</span><label class="chat-toggle" title="${esc(L.chatOnlyTip)}"><input type="checkbox" id="chat-only"${state.chatOnly ? " checked" : ""}>${esc(L.chatOnly)}</label>` : ""}
+    </div>`;
 }
 function renderPreview() {
   const s = state.sessions.find(x => x.id === state.selected);
@@ -1037,17 +1102,107 @@ function renderPreview() {
   if (state.pvKey !== key) {
     // Different session or search: rebuild everything.
     state.pvKey = key;
-    $("preview").innerHTML = `<div class="pv"><div id="pv-head">${headHtml(s)}</div><div id="pv-tx"></div><div id="pv-foot"></div></div>`;
+    $("preview").innerHTML = `<div class="pv"><div id="pv-head">${headHtml(s)}</div><div id="pv-tx"></div><div id="pv-foot"></div><div id="pv-review"></div></div>`;
     $("preview").scrollTop = 0;
-    openTx(s);
+    showTab(s);
   } else {
     // Same session: refresh the header only, keeping scroll position and opened tool calls.
     $("pv-head").innerHTML = headHtml(s);
+    if (state.pvTab === "review") { const rv = state.rv.get(s.id); if (rv && rv.modified !== s.modified) loadReview(s); }
     const tx = state.tx.get(txKey(s));
     if (tx && tx.modified !== s.modified && !tx.stale) { tx.stale = true; if (tx.done) renderTxFoot(s); }
   }
   if (state.editing) { const i = $("rename"); i.focus(); i.select(); }
 }
+// ---- Review: the session as tasks, built by /api/review from the session file ----
+function showTab(s) {
+  const review = state.pvTab === "review";
+  $("pv-tx").hidden = review; $("pv-foot").hidden = review; $("pv-review").hidden = !review;
+  if (review) { const rv = state.rv.get(s.id); if (!rv || rv.modified !== s.modified) loadReview(s); else renderReview(s); }
+  else if (!$("pv-tx").childElementCount) openTx(s);
+}
+async function loadReview(s) {
+  if (!state.rv.get(s.id)?.data) $("pv-review").innerHTML = `<div class="empty">${esc(L.reviewLoading)}</div>`;
+  try {
+    const data = await api(`/api/review?id=${encodeURIComponent(s.id)}`);
+    state.rv.set(s.id, { data, modified: s.modified });
+    if (state.selected === s.id) renderReview(s);
+  } catch (e) { if (state.selected === s.id) $("pv-review").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+function diffHtml(patch) {
+  return `<div class="diff">${patch.split("\n").filter(l => !/^(---|\+\+\+) /.test(l)).map(l => {
+    const cls = l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : l.startsWith("@@") ? "hunk" : "";
+    return `<div class="${cls}">${esc(l) || " "}</div>`;
+  }).join("")}</div>`;
+}
+function explanationHtml(task, ex) {
+  if (!ex) {
+    const busy = state.explaining.has(`${state.selected}#${task.n}`);
+    return `<button class="btn" data-explain="${task.n}" title="${esc(L.explainTip)}"${busy ? " disabled" : ""}>${esc(busy ? L.explaining : L.explain)}</button>`;
+  }
+  const stale = ex.taskEnd && task.end && ex.taskEnd !== task.end;
+  return `<div class="explain">
+    <h4>${esc(L.exSummary)}</h4><div>${esc(ex.summary)}</div>
+    ${ex.cause ? `<h4>${esc(L.exCause)}</h4><div>${esc(ex.cause)}</div>` : ""}
+    ${ex.changes.length ? `<h4>${esc(L.exChanges)}</h4>${ex.changes.map(c => `<div><code>${esc(c.file)}</code>：${esc(c.why)}</div>`).join("")}` : ""}
+    ${ex.verified ? `<h4>${esc(L.exVerified)}</h4><div>${esc(ex.verified)}</div>` : ""}
+    ${ex.learn.length ? `<h4>${esc(L.exLearn)}</h4>${ex.learn.map(l => `<div class="learn"><b>${esc(l.concept)}</b><br>${esc(l.explain)}</div>`).join("")}` : ""}
+    <div style="margin-top:6px">${stale ? `<span class="stale">${esc(L.staleExplain)} · </span>` : ""}<button class="btn" data-explain="${task.n}" style="font-size:12px;padding:2px 8px"${state.explaining.has(`${state.selected}#${task.n}`) ? " disabled" : ""}>${esc(state.explaining.has(`${state.selected}#${task.n}`) ? L.explaining : L.reexplain)}</button></div>
+  </div>`;
+}
+function taskHtml(task, ex) {
+  const added = task.files.reduce((n, f) => n + f.added, 0), removed = task.files.reduce((n, f) => n + f.removed, 0);
+  const minutes = task.time && task.end ? (new Date(task.end) - new Date(task.time)) / 60000 : 0;
+  const did = task.files.length || task.commands.length;
+  const chips = [
+    task.files.length ? `<span>${esc(L.filesN(task.files.length, added, removed))}</span>` : "",
+    task.checks.passed ? `<span class="ok">✓ ${esc(L.checksOk(task.checks.passed))}</span>` : "",
+    task.checks.failed ? `<span class="bad">✗ ${esc(L.checksFail(task.checks.failed))}</span>` : "",
+    task.flashes.length ? `<span>${esc(L.flashesN(task.flashes.length))}</span>` : "",
+    task.toolCalls ? `<span>${esc(L.toolsN(task.toolCalls))}</span>` : "",
+  ].join("");
+  const files = task.files.length ? `<details open><summary>${esc(L.files)}</summary>${task.files.map(f =>
+    `<details${task.files.length <= 3 ? " open" : ""}><summary class="file-sum">${esc(f.path)} <span style="color:var(--ok)">+${f.added}</span> <span style="color:var(--danger)">−${f.removed}</span>${f.written ? `<span class="badge">${esc(L.written)}</span>` : ""}${f.outside ? `<span class="badge warn">${esc(L.outsideProject)}</span>` : ""}${f.patches.length > 1 ? `<span class="badge">${esc(L.editsN(f.patches.length))}</span>` : ""}</summary>${
+      // Many edits: the last one open, the earlier ones folded (they include steps undone later).
+      f.patches.length > 3 ? `<details><summary>${esc(L.earlierEdits(f.patches.length - 1))}</summary>${f.patches.slice(0, -1).map(diffHtml).join("")}</details>${diffHtml(f.patches[f.patches.length - 1])}` : f.patches.map(diffHtml).join("")
+    }</details>`).join("")}</details>` : "";
+  const cmds = task.commands.length ? `<details><summary>${esc(L.commands(task.commands.length))}</summary>${task.commands.map(c =>
+    `<div class="cmd${c.ok ? "" : " fail"}"><span class="st">${c.ok ? "✓" : "✗"}</span><span class="k">${esc(L.kinds[c.kind] || c.kind)}</span><code>${esc(c.command.length > 220 ? c.command.slice(0, 220) + "…" : c.command)}</code></div>${c.ok ? "" : `<div class="cmd-tail" title="${esc(L.failedTail)}">${esc(c.tail)}</div>`}`).join("")}</details>` : "";
+  const lg = task.ledger;
+  const hw = lg && (lg.hypotheses.length || lg.facts.length) ? `<details><summary>${esc(L.hardware)}</summary>
+    ${lg.target ? `<div class="hyp"><b>${esc(lg.target)}</b></div>` : ""}
+    ${lg.hypotheses.length ? `<div class="hyp" style="color:var(--faint)">${esc(L.hypotheses)}</div>${lg.hypotheses.map(h => `<div class="hyp">${({ confirmed: "✅", ruled_out: "❌", testing: "🔄", open: "◻️" })[h.status] ?? "◻️"} ${esc(h.text)} <span class="badge">${esc(L.status[h.status] ?? h.status)}</span>${h.evidence ? `<div class="ev">${esc(h.evidence)}</div>` : ""}</div>`).join("")}` : ""}
+    ${lg.facts.length ? `<div class="hyp" style="color:var(--faint)">${esc(L.facts)}</div>${lg.facts.map(f => `<div class="hyp">• ${esc(f.text)} <span class="badge">${esc(f.verified ? L.reproduced : L.singleObs)}</span>${f.evidence ? `<div class="ev">${esc(f.evidence)}</div>` : ""}</div>`).join("")}` : ""}
+  </details>` : "";
+  const reply = task.reply ? `<details><summary>${esc(L.finalReply)}</summary><div class="md">${md(task.reply)}</div></details>` : "";
+  return `<div class="task">
+    <div class="q"><span class="num">#${task.n}</span><span class="txt">${esc(task.prompt)}</span></div>
+    <div class="meta">${task.time ? fmtFull(task.time) : ""}${minutes ? ` · ${esc(L.minutes(minutes))}` : ""}${did ? "" : ` · ${esc(L.taskQA)}`}</div>
+    ${chips ? `<div class="chips">${chips}</div>` : ""}
+    ${did ? explanationHtml(task, ex) : ""}
+    ${files}${cmds}${hw}${reply}
+  </div>`;
+}
+function renderReview(s) {
+  const rv = state.rv.get(s.id); if (!rv?.data) return;
+  const { tasks, explanations } = rv.data;
+  $("pv-review").innerHTML = tasks.length
+    ? `<p class="rv-lead">${esc(L.reviewLead)}</p>` + [...tasks].reverse().map(t => taskHtml(t, explanations[String(t.n)])).join("")
+    : `<div class="empty">${esc(L.reviewEmpty)}</div>`;
+}
+async function explainTask(n) {
+  const s = state.sessions.find(x => x.id === state.selected); if (!s) return;
+  const key = `${s.id}#${n}`;
+  if (state.explaining.has(key)) return;
+  state.explaining.add(key); renderReview(s);
+  try {
+    const r = await api("/api/review/explain", { id: s.id, n, model: state.aiModel || undefined });
+    const rv = state.rv.get(s.id);
+    if (rv?.data) rv.data.explanations = { ...rv.data.explanations, [String(n)]: r.explanation };
+  } catch (e) { toast(e.message); }
+  finally { state.explaining.delete(key); if (state.selected === s.id) renderReview(s); }
+}
+
 function render() { renderHeader(); renderSide(); renderList(); renderPreview(); }
 function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("show"), 3200); }
 function select(id, reveal) {
@@ -1179,6 +1334,13 @@ $("list").addEventListener("click", e => {
 $("list").addEventListener("dblclick", e => { if (e.target.closest("[data-id]") && !(state.picking && !state.ai)) act("open"); });
 $("preview").addEventListener("click", e => {
   const g = e.target.closest("[data-goto]"); if (g) { select(g.dataset.goto); return; }
+  const tab = e.target.closest("[data-tab]");
+  if (tab) {
+    const s = state.sessions.find(x => x.id === state.selected);
+    if (s && state.pvTab !== tab.dataset.tab) { state.pvTab = tab.dataset.tab; savePrefs(); $("pv-head").innerHTML = headHtml(s); showTab(s); }
+    return;
+  }
+  const ex = e.target.closest("[data-explain]"); if (ex && !ex.disabled) { explainTask(Number(ex.dataset.explain)); return; }
   const c = e.target.closest("[data-copy]");
   if (c) {
     // A message copies its original Markdown; a code block copies what it shows.
