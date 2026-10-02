@@ -79,14 +79,25 @@ test("patch stats leave headers out", () => {
 
 test("explanations are read from the model's JSON and kept in bounds", async () => {
   const { parseExplanation, explainPrompt } = await import("../src/explain.ts");
-  const ex = parseExplanation('Sure!\n{"summary":"fixed the discount","cause":"subtracted as an amount","changes":[{"file":"cart.js","why":"multiply"},{"why":"no file"}],"verified":"npm test failed, then passed","learn":[{"concept":"percent","explain":"x"},{"concept":"a","explain":"b"},{"concept":"c","explain":"d"},{"concept":"e","explain":"f"}]}');
+  const ex = parseExplanation('Sure!\n{"summary":"fixed the discount","cause":["subtracted as an amount"],"changes":[{"file":"cart.js","what":"multiply","why":"it is a percent"},{"why":"no file"}],"verified":["npm test failed","npm test passed"],"learn":[{"concept":"percent","plain":"x","here":"y"},{"concept":"a","plain":"b"},{"concept":"c","plain":"d"},{"concept":"e","plain":"f"}],"terms":[{"term":"LSB","meaning":"one unit of a reading"},{"term":"no meaning"}]}');
   assert.equal(ex.summary, "fixed the discount");
-  assert.deepEqual(ex.changes, [{ file: "cart.js", why: "multiply" }]);
+  assert.deepEqual(ex.cause, ["subtracted as an amount"]);
+  assert.deepEqual(ex.changes, [{ file: "cart.js", what: "multiply", why: "it is a percent" }]);
+  assert.deepEqual(ex.verified, ["npm test failed", "npm test passed"]);
   assert.equal(ex.learn.length, 3);
+  assert.deepEqual(ex.terms, [{ term: "LSB", meaning: "one unit of a reading" }]);
   assert.throws(() => parseExplanation("no json here"));
   const { tasks } = buildReview(session);
   const prompt = JSON.parse(explainPrompt(tasks[0]!, "/work/shop"));
   assert.equal(prompt.question, "npm test fails, fix cart.js");
   assert.match(prompt.commands[0], /^FAILED \[test\]/);
   assert.equal(prompt.files[0].file, "cart.js");
+});
+
+test("a model that answers in the old shape still reads", async () => {
+  const { parseExplanation } = await import("../src/explain.ts");
+  const ex = parseExplanation('{"summary":"s","cause":"one long paragraph","changes":[{"file":"a.c","why":"w"}],"verified":"tests passed","learn":[{"concept":"c","explain":"old field"}]}');
+  assert.deepEqual(ex.cause, ["one long paragraph"]);
+  assert.deepEqual(ex.verified, ["tests passed"]);
+  assert.equal(ex.learn[0]!.plain, "old field");
 });

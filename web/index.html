@@ -168,10 +168,18 @@ section.preview { overflow-y: auto; background: var(--panel); }
 .cmd-tail { font: 11.5px/1.4 var(--mono); color: var(--danger); background: var(--bg); border-radius: 6px; padding: 4px 8px; margin: 2px 0 6px 0; white-space: pre-wrap; }
 .hyp { font-size: 13px; padding: 3px 0; }
 .hyp .ev { color: var(--faint); font-size: 12px; }
-.explain { background: var(--accent-soft); border-radius: 9px; padding: 10px 12px; margin: 4px 0 10px; font-size: 13.5px; line-height: 1.6; }
-.explain h4 { margin: 8px 0 2px; font-size: 12px; color: var(--accent-text); }
-.explain h4:first-child { margin-top: 0; }
-.explain .learn { background: var(--panel); border-radius: 7px; padding: 6px 9px; margin: 5px 0; }
+.explain { background: var(--accent-soft); border-radius: 10px; padding: 14px 16px; margin: 4px 0 12px; font-size: 14px; line-height: 1.75; }
+.explain > * { max-width: 40em; }
+.explain .sum { font-size: 15.5px; font-weight: 650; line-height: 1.55; margin-bottom: 4px; }
+.explain h4 { margin: 14px 0 4px; font-size: 13px; color: var(--accent-text); font-weight: 650; }
+.explain ul, .explain ol { margin: 0; padding-left: 1.4em; }
+.explain li { margin: 2px 0; }
+.explain li .why { color: var(--muted); }
+.explain code { font: 12.5px var(--mono); background: var(--panel); border-radius: 4px; padding: 0 4px; }
+.explain .learn { background: var(--panel); border-radius: 8px; padding: 8px 11px; margin: 6px 0; }
+.explain .learn .here { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.explain .terms { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 13px; }
+.explain .terms dt { font-weight: 600; } .explain .terms dd { margin: 0; color: var(--muted); }
 .explain .stale { font-size: 12px; color: var(--warn); }
 .msg { margin-bottom: 12px; display: flex; gap: 10px; }
 .msg .who { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; background: var(--user); color: var(--muted); }
@@ -446,7 +454,7 @@ const L = {
     status: { open: "待验证", testing: "验证中", ruled_out: "已排除", confirmed: "已确认" }, finalReply: "AI 的最终回复",
     explain: "✨ 让 AI 讲解这次改动", explainTip: "用一次模型调用，讲清楚原因、每处改动为什么这样改、怎么验证的，以及能学到什么",
     explaining: "讲解中…", reexplain: "重新讲解", staleExplain: "会话在讲解之后有更新",
-    exSummary: "总结", exCause: "原因", exChanges: "每处改动", exVerified: "怎么验证的", exLearn: "学到什么",
+    exSummary: "总结", exCause: "🔍 原因", exChanges: "✏️ 改了什么", exVerified: "✅ 怎么验证的", exLearn: "💡 学到什么", exTerms: "📖 术语", exHere: "这次：", because: "因为",
     kinds: { test: "测试", build: "编译", flash: "烧录", serial: "串口", git: "git", install: "安装", run: "命令" },
     pickSession: "选择一个会话查看摘要和内容",
     switchingBanner: "pi 正在切换会话，稍后会自动恢复。", tokenExpired: "页面令牌已失效：请在 pi 中运行 /sessions 重新打开。",
@@ -526,7 +534,7 @@ const L = {
     status: { open: "open", testing: "testing", ruled_out: "ruled out", confirmed: "confirmed" }, finalReply: "The AI's final reply",
     explain: "✨ Explain this change", explainTip: "One model call: the cause, why each change was made, how it was verified, and what to learn from it",
     explaining: "Explaining…", reexplain: "Explain again", staleExplain: "the session changed after this explanation",
-    exSummary: "Summary", exCause: "Cause", exChanges: "Each change", exVerified: "How it was verified", exLearn: "What to learn",
+    exSummary: "Summary", exCause: "🔍 Cause", exChanges: "✏️ What changed", exVerified: "✅ How it was verified", exLearn: "💡 What to learn", exTerms: "📖 Terms", exHere: "Here: ", because: "because",
     kinds: { test: "test", build: "build", flash: "flash", serial: "serial", git: "git", install: "install", run: "command" },
     pickSession: "Select a session to see its summary and conversation",
     switchingBanner: "pi is switching sessions; this recovers automatically.", tokenExpired: "The page token is no longer valid; run /sessions in pi to reopen the page.",
@@ -1141,13 +1149,18 @@ function explanationHtml(task, ex) {
     return `<button class="btn" data-explain="${task.n}" title="${esc(L.explainTip)}"${busy ? " disabled" : ""}>${esc(busy ? L.explaining : L.explain)}</button>`;
   }
   const stale = ex.taskEnd && task.end && ex.taskEnd !== task.end;
+  // `name` in the text becomes code; everything else is escaped.
+  const rich = t => esc(t).replace(/`([^`]+)`/g, "<code>$1</code>");
+  const items = v => (Array.isArray(v) ? v : v ? [v] : []);
+  const cause = items(ex.cause), verified = items(ex.verified), busy = state.explaining.has(`${state.selected}#${task.n}`);
   return `<div class="explain">
-    <h4>${esc(L.exSummary)}</h4><div>${esc(ex.summary)}</div>
-    ${ex.cause ? `<h4>${esc(L.exCause)}</h4><div>${esc(ex.cause)}</div>` : ""}
-    ${ex.changes.length ? `<h4>${esc(L.exChanges)}</h4>${ex.changes.map(c => `<div><code>${esc(c.file)}</code>：${esc(c.why)}</div>`).join("")}` : ""}
-    ${ex.verified ? `<h4>${esc(L.exVerified)}</h4><div>${esc(ex.verified)}</div>` : ""}
-    ${ex.learn.length ? `<h4>${esc(L.exLearn)}</h4>${ex.learn.map(l => `<div class="learn"><b>${esc(l.concept)}</b><br>${esc(l.explain)}</div>`).join("")}` : ""}
-    <div style="margin-top:6px">${stale ? `<span class="stale">${esc(L.staleExplain)} · </span>` : ""}<button class="btn" data-explain="${task.n}" style="font-size:12px;padding:2px 8px"${state.explaining.has(`${state.selected}#${task.n}`) ? " disabled" : ""}>${esc(state.explaining.has(`${state.selected}#${task.n}`) ? L.explaining : L.reexplain)}</button></div>
+    <div class="sum">${rich(ex.summary)}</div>
+    ${cause.length ? `<h4>${esc(L.exCause)}</h4>${cause.length > 1 ? `<ul>${cause.map(c => `<li>${rich(c)}</li>`).join("")}</ul>` : `<div>${rich(cause[0])}</div>`}` : ""}
+    ${ex.changes.length ? `<h4>${esc(L.exChanges)}</h4><ul>${ex.changes.map(c => `<li><code>${esc(c.file)}</code>：${c.what ? rich(c.what) + (c.why ? ` <span class="why">— ${esc(L.because)} ${rich(c.why)}</span>` : "") : rich(c.why)}</li>`).join("")}</ul>` : ""}
+    ${verified.length ? `<h4>${esc(L.exVerified)}</h4>${verified.length > 1 ? `<ol>${verified.map(v => `<li>${rich(v)}</li>`).join("")}</ol>` : `<div>${rich(verified[0])}</div>`}` : ""}
+    ${ex.learn.length ? `<h4>${esc(L.exLearn)}</h4>${ex.learn.map(l => `<div class="learn"><b>${rich(l.concept)}</b><div>${rich(l.plain ?? l.explain ?? "")}</div>${l.here ? `<div class="here">${esc(L.exHere)}${rich(l.here)}</div>` : ""}</div>`).join("")}` : ""}
+    ${ex.terms?.length ? `<h4>${esc(L.exTerms)}</h4><dl class="terms">${ex.terms.map(t => `<dt>${rich(t.term)}</dt><dd>${rich(t.meaning)}</dd>`).join("")}</dl>` : ""}
+    <div style="margin-top:10px">${stale ? `<span class="stale">${esc(L.staleExplain)} · </span>` : ""}<button class="btn" data-explain="${task.n}" style="font-size:12px;padding:2px 8px"${busy ? " disabled" : ""}>${esc(busy ? L.explaining : L.reexplain)}</button></div>
   </div>`;
 }
 function taskHtml(task, ex) {
