@@ -38,6 +38,8 @@ test("one task per question, with its changes, commands and checks", () => {
   const { cwd, tasks } = buildReview(session);
   assert.equal(cwd, "/work/shop");
   assert.equal(tasks.length, 2);
+  // A task ends with its last reply, not when the next question is asked: asking again must not make its explanation stale.
+  assert.ok(tasks[0]!.end! < tasks[1]!.time!);
   const [fix, flash] = tasks;
   assert.equal(fix!.prompt, "npm test fails, fix cart.js");
   assert.equal(fix!.reply, "Fixed: the discount was subtracted as an amount instead of a percentage.");
@@ -92,6 +94,23 @@ test("explanations are read from the model's JSON and kept in bounds", async () 
   assert.equal(prompt.question, "npm test fails, fix cart.js");
   assert.match(prompt.commands[0], /^FAILED \[test\]/);
   assert.equal(prompt.files[0].file, "cart.js");
+  assert.equal(prompt.earlierTasks, undefined);
+});
+
+test("a follow-up's explanation sees the tasks before it", async () => {
+  const { earlierTasks, explainPrompt } = await import("../src/explain.ts");
+  const task = (n: number, prompt: string, reply: string, files: string[] = []) =>
+    ({ n, prompt, reply, files: files.map(path => ({ path, patches: [], added: 0, removed: 0, written: false, outside: false })), commands: [], checks: { passed: 0, failed: 0 }, toolCalls: 0, toolErrors: 0, flashes: [] });
+  const tasks = Array.from({ length: 7 }, (_, i) => task(i + 1, `question ${i + 1}`, `reply ${i + 1}`, i === 5 ? ["main/bmi270.c"] : []));
+  tasks[6]!.prompt = "still wrong";
+  const earlier = earlierTasks(tasks, 7, { "6": { summary: "fixed the upload order", cause: [], changes: [], verified: [], learn: [] } });
+  assert.deepEqual(earlier.map(t => t.n), [2, 3, 4, 5, 6]);
+  assert.deepEqual(earlier.at(-1), { n: 6, question: "question 6", outcome: "fixed the upload order", files: ["main/bmi270.c"] });
+  assert.equal(earlier[0]!.outcome, "reply 2");
+  assert.deepEqual(earlierTasks(tasks, 1), []);
+  const prompt = JSON.parse(explainPrompt(tasks[6]!, "/work", earlier));
+  assert.equal(prompt.question, "still wrong");
+  assert.equal(prompt.earlierTasks.length, 5);
 });
 
 test("a model that answers in the old shape still reads", async () => {

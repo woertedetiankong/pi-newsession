@@ -13,7 +13,7 @@ import { exportImages } from "./export.ts";
 import { moveToTrash, purgeTrash, trashCount, TRASH_DAYS } from "./trash.ts";
 import { buildTranscript, findImage, firstMatch, type TranscriptItem } from "./transcript.ts";
 import { buildReview, type ReviewTask } from "./review.ts";
-import { ExplanationStore, explainTask } from "./explain.ts";
+import { ExplanationStore, earlierTasks, explainTask } from "./explain.ts";
 
 /** What the server needs from the live pi runtime; replaced on every session_start. */
 export interface Binding {
@@ -265,7 +265,8 @@ export class SessionsServer implements WebApp {
       const review = await this.review(r.path).catch(() => { throw httpError(404, "readFailed"); });
       const task = review.tasks.find(t => t.n === Number(body.n));
       if (!task) throw httpError(404, "taskNotFound");
-      const explanation = await explainTask({ model, modelRegistry: ctx.modelRegistry }, task, review.cwd, signal, lang);
+      const earlier = earlierTasks(review.tasks, task.n, await this.explanations().forSession(r.id));
+      const explanation = await explainTask({ model, modelRegistry: ctx.modelRegistry }, task, review.cwd, signal, lang, earlier);
       await this.explanations().save(r.id, task.n, explanation);
       return { explanation };
     }

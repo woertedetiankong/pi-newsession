@@ -132,7 +132,9 @@ export function buildReview(raw: string): { cwd?: string; tasks: ReviewTask[] } 
 
   for (const e of activeBranch(raw)) {
     const time = typeof e.timestamp === "string" ? e.timestamp : undefined;
-    if (task && time) task.end = time;
+    // The next question starts a new task: it is not the end of this one.
+    const asks = e.type === "message" && e.message?.role === "user" && !!textOf(e.message.content).trim();
+    if (task && time && !asks) task.end = time;
     if (e.type === "custom" && task) {
       if (e.customType === "pi-lab.ledger" && e.data) task.ledger = e.data as ReviewLedger;
       if (e.customType === "pi-lab.flash" && e.data) task.flashes.push({ at: Number(e.data.at) || 0, source: String(e.data.source ?? "") });
