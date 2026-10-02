@@ -174,8 +174,10 @@ section.preview { overflow-y: auto; background: var(--panel); }
 .explain h4 { margin: 14px 0 4px; font-size: 13px; color: var(--accent-text); font-weight: 650; }
 .explain ul, .explain ol { margin: 0; padding-left: 1.4em; }
 .explain li { margin: 2px 0; }
-.explain li .why { color: var(--muted); }
-.explain code { font: 12.5px var(--mono); background: var(--panel); border-radius: 4px; padding: 0 4px; }
+.explain code { font: 13px var(--mono); color: var(--accent-text); background: none; padding: 0; }
+.explain .file { font: 600 13px var(--mono); color: var(--text); margin: 8px 0 2px; }
+.explain .file:first-of-type { margin-top: 2px; }
+.explain li .why { display: block; color: var(--muted); font-size: 13px; }
 .explain .learn { background: var(--panel); border-radius: 8px; padding: 8px 11px; margin: 6px 0; }
 .explain .learn .here { color: var(--muted); font-size: 13px; margin-top: 2px; }
 .explain .terms { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 13px; }
@@ -534,7 +536,7 @@ const L = {
     status: { open: "open", testing: "testing", ruled_out: "ruled out", confirmed: "confirmed" }, finalReply: "The AI's final reply",
     explain: "✨ Explain this change", explainTip: "One model call: the cause, why each change was made, how it was verified, and what to learn from it",
     explaining: "Explaining…", reexplain: "Explain again", staleExplain: "the session changed after this explanation",
-    exSummary: "Summary", exCause: "🔍 Cause", exChanges: "✏️ What changed", exVerified: "✅ How it was verified", exLearn: "💡 What to learn", exTerms: "📖 Terms", exHere: "Here: ", because: "because",
+    exSummary: "Summary", exCause: "🔍 Cause", exChanges: "✏️ What changed", exVerified: "✅ How it was verified", exLearn: "💡 What to learn", exTerms: "📖 Terms", exHere: "Here: ", because: "because ",
     kinds: { test: "test", build: "build", flash: "flash", serial: "serial", git: "git", install: "install", run: "command" },
     pickSession: "Select a session to see its summary and conversation",
     switchingBanner: "pi is switching sessions; this recovers automatically.", tokenExpired: "The page token is no longer valid; run /sessions in pi to reopen the page.",
@@ -1153,10 +1155,12 @@ function explanationHtml(task, ex) {
   const rich = t => esc(t).replace(/`([^`]+)`/g, "<code>$1</code>");
   const items = v => (Array.isArray(v) ? v : v ? [v] : []);
   const cause = items(ex.cause), verified = items(ex.verified), busy = state.explaining.has(`${state.selected}#${task.n}`);
+  // What was kept as it was is not a change, whatever the model wrote.
+  const changes = ex.changes.filter(c => !/^(保留|未改|没有改|不变|保持|keep|kept|unchanged|no change|left)/i.test((c.what || c.why || "").trim()));
   return `<div class="explain">
     <div class="sum">${rich(ex.summary)}</div>
     ${cause.length ? `<h4>${esc(L.exCause)}</h4>${cause.length > 1 ? `<ul>${cause.map(c => `<li>${rich(c)}</li>`).join("")}</ul>` : `<div>${rich(cause[0])}</div>`}` : ""}
-    ${ex.changes.length ? `<h4>${esc(L.exChanges)}</h4><ul>${ex.changes.map(c => `<li><code>${esc(c.file)}</code>：${c.what ? rich(c.what) + (c.why ? ` <span class="why">— ${esc(L.because)} ${rich(c.why)}</span>` : "") : rich(c.why)}</li>`).join("")}</ul>` : ""}
+    ${changes.length ? `<h4>${esc(L.exChanges)}</h4>${[...new Set(changes.map(c => c.file))].map(file => `<div class="file">${esc(file)}</div><ul>${changes.filter(c => c.file === file).map(c => `<li>${c.what ? rich(c.what) + (c.why ? `<span class="why">— ${esc(L.because)}${/^[\x21-\x7e]/.test(c.why) && !L.because.endsWith(" ") ? " " : ""}${rich(c.why)}</span>` : "") : rich(c.why)}</li>`).join("")}</ul>`).join("")}` : ""}
     ${verified.length ? `<h4>${esc(L.exVerified)}</h4>${verified.length > 1 ? `<ol>${verified.map(v => `<li>${rich(v)}</li>`).join("")}</ol>` : `<div>${rich(verified[0])}</div>`}` : ""}
     ${ex.learn.length ? `<h4>${esc(L.exLearn)}</h4>${ex.learn.map(l => `<div class="learn"><b>${rich(l.concept)}</b><div>${rich(l.plain ?? l.explain ?? "")}</div>${l.here ? `<div class="here">${esc(L.exHere)}${rich(l.here)}</div>` : ""}</div>`).join("")}` : ""}
     ${ex.terms?.length ? `<h4>${esc(L.exTerms)}</h4><dl class="terms">${ex.terms.map(t => `<dt>${rich(t.term)}</dt><dd>${rich(t.meaning)}</dd>`).join("")}</dl>` : ""}
