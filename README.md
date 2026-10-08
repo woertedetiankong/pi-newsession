@@ -13,7 +13,7 @@
 pi install git:github.com/woertedetiankong/pi-newsession
 
 # 或锁定到某个版本，不随仓库更新而变化
-pi install git:github.com/woertedetiankong/pi-newsession@v0.2.6
+pi install git:github.com/woertedetiankong/pi-newsession@v0.3.3
 
 # 或只装到当前项目（写入 .pi/settings.json）
 pi install git:github.com/woertedetiankong/pi-newsession -l
