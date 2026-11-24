@@ -19,7 +19,7 @@ import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Serv
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 
-export const HUB_VERSION = 2;
+export const HUB_VERSION = 3;
 export const DEFAULT_PORT = 47291;
 
 export type WebLanguage = "zh" | "en";
@@ -49,6 +49,12 @@ export interface WebApp {
   /** Languages the page supports; the switcher offers a toggle when there is more than one. */
   languages: WebLanguage[];
   page(): Promise<string>;
+  /**
+   * Optional static files below the page, e.g. "vendor/x.js" for GET /<app>/vendor/x.js (no token,
+   * so only public assets). Return undefined for 404. The path is already decoded and checked: no
+   * "..", ".", empty or hidden segments, no backslashes.
+   */
+  asset?(path: string): Promise<WebBinary | undefined>;
   /** Throw an error with a numeric `status` for HTTP errors. */
   handle(req: WebRequest): Promise<unknown>;
 }
@@ -259,7 +265,17 @@ class Hub implements WebHub {
         const app = first ? this.registry.get(first) : this.apps()[0];
         if (!app) throw webError(404, "not found");
         if (!first || rest.length === 0) return redirect(res, `/${app.id}/`);
-        if (rest.join("/") !== "") throw webError(404, "not found");
+        if (rest.join("/") !== "") {
+          const path = assetPath(rest);
+          const data = path && typeof app.asset === "function" ? await app.asset(path) : undefined;
+          if (!data || !isBinary(data)) throw webError(404, "not found");
+          res.writeHead(200, {
+            "content-type": data.type, "content-length": data.binary.length, "x-content-type-options": "nosniff",
+            "cache-control": data.cacheSeconds ? `public, max-age=${data.cacheSeconds}` : "no-cache",
+          });
+          res.end(data.binary);
+          return;
+        }
         return send(res, 200, await app.page(), {
           "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-frame-options": "DENY", "referrer-policy": "no-referrer",
         });
@@ -295,6 +311,15 @@ class Hub implements WebHub {
       else res.destroy();
     }
   }
+}
+
+/** URL segments → a safe relative asset path, or undefined. */
+function assetPath(segments: string[]): string | undefined {
+  try {
+    const parts = segments.map(s => decodeURIComponent(s));
+    if (parts.some(p => !p || p.startsWith(".") || /[\\/\0]/.test(p))) return undefined;
+    return parts.join("/");
+  } catch { return undefined; }
 }
 
 function send(res: ServerResponse, status: number, body: string, headers: Record<string, string>): void {

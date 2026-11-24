@@ -2,7 +2,7 @@
 // the commands it ran and whether its checks passed, and, when pi-lab was in use, its debug ledger and flashes.
 // Built from the session file alone: no git, no model.
 
-import { isAbsolute, relative } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { activeBranch } from "./transcript.ts";
 
 export interface ReviewFile {
@@ -170,6 +170,21 @@ export function buildReview(raw: string): { cwd?: string; tasks: ReviewTask[] } 
       const args = call?.args ?? {};
       const ok = !m.isError;
       if (!ok) task.toolErrors++;
+      if (name === "apply_patch" && ok && typeof args.patch === "string") {
+        for (const section of String(args.patch).split(/(?=^\*\*\* (?:Add|Update|Delete) File: )/m)) {
+          const header = section.match(/^\*\*\* (Add|Update|Delete) File: (.+)$/m);
+          if (!header) continue;
+          const absolute = isAbsolute(header[2]) ? header[2] : resolve(cwd ?? ".", header[2]);
+          const path = rel(absolute), patch = section.split("\n").filter(l => !l.startsWith("*** ")).join("\n").trimEnd();
+          const file = files.get(path) ?? { path, patches: [], added: 0, removed: 0, written: false, outside: outside(absolute) };
+          const stats = patchStats(patch);
+          file.patches.push(patch || `@@ ${header[1]} ${path} (content not recorded)`);
+          file.added += stats.added; file.removed += stats.removed;
+          file.written ||= header[1] === "Add";
+          files.set(path, file);
+        }
+        continue;
+      }
       if ((name === "edit" || name === "write") && ok && typeof args.path === "string") {
         const path = rel(args.path);
         const file = files.get(path) ?? { path, patches: [], added: 0, removed: 0, written: false, outside: outside(args.path) };

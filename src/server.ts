@@ -4,10 +4,17 @@ import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { type Lang, LocalizedError, localize, type MessageKey, requestLang } from "./i18n.ts";
 import { createHub, sharedHub, type WebApp, type WebBinary, type WebHub, type WebLanguage, type WebRequest } from "./hub.ts";
-import { SessionScanner, searchSnippet, type SessionRecord } from "./scan.ts";
+import { SessionScanner, readSession, searchSnippet, type SessionRecord } from "./scan.ts";
+import type { SessionRoot } from "./adapters.ts";
+import { resumeCommand } from "./launch.ts";
 import { MetaStore, type MetaPatch } from "./meta.ts";
 import { Organizer, organizeOne, type ModelContext } from "./organize.ts";
 import { askSessions } from "./ask.ts";
+
+const VENDOR_TYPES: Record<string, string> = {
+  ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".txt": "text/plain; charset=utf-8",
+  ".woff2": "font/woff2",
+};
 import { checkWritable, DEFAULT_IMAGE_DIR, expandDir, openPath, type DataLocation } from "./storage.ts";
 import { exportImages } from "./export.ts";
 import { moveToTrash, purgeTrash, trashCount, TRASH_DAYS } from "./trash.ts";
@@ -34,7 +41,12 @@ export interface ServerOptions {
   /** Lets the page move meta.json; without it the data dir is fixed at metaFile. */
   location?: DataLocation;
   /** pi's settings.json, shown in the "how to move sessions" hint. */
-  settingsFile?: string; }
+    settingsFile?: string;
+  /** Local Claude Code and Codex locations. No network history is queried. */
+  sources?: SessionRoot[];
+  standalone?: boolean;
+  openSession?: (record: SessionRecord, lang: Lang) => Promise<{ ok: boolean; message: string; command?: string }>;
+}
 
 /** An HTTP error with a translatable message; handle() answers in the page's language. */
 const httpError = (status: number, key: MessageKey, ...args: unknown[]) => new LocalizedError(key, args, status);
@@ -66,10 +78,10 @@ export class SessionsServer implements WebApp {
 
   constructor(private opts: ServerOptions) {
     this.meta = new MetaStore(opts.metaFile);
-    this.scanner = new SessionScanner(async () => [opts.root, ...(await (await this.currentMeta()).sessionDirs())]);
+    this.scanner = new SessionScanner(async () => [opts.root, ...(await (await this.currentMeta()).sessionDirs())], async () => opts.sources ?? []);
     this.organizer = new Organizer((id, signal) => this.organize(id, signal));
-    this.hub = opts.token
-      ? createHub({ agentDir: opts.agentDir ?? "", token: opts.token, port: opts.port ?? 0 })
+    this.hub = opts.token || opts.standalone
+      ? createHub({ agentDir: opts.agentDir ?? "", token: opts.token, port: opts.port ?? (opts.standalone ? 47291 : 0) })
       : sharedHub(opts.agentDir ?? join(homedir(), ".pi", "agent"));
   }
 
@@ -92,6 +104,17 @@ export class SessionsServer implements WebApp {
   }
 
   page(): Promise<string> { return readFile(this.opts.webFile, "utf8"); }
+
+  /** Serves web/vendor/* (third-party browser builds) next to the page; nothing else. */
+  async asset(path: string): Promise<WebBinary | undefined> {
+    const m = /^vendor\/([A-Za-z0-9][A-Za-z0-9._-]*)$/.exec(path);
+    const type = m && VENDOR_TYPES[m[1].slice(m[1].lastIndexOf(".")).toLowerCase()];
+    if (!m || !type) return undefined;
+    const dir = resolve(dirname(this.opts.webFile), "vendor"), file = resolve(dir, m[1]);
+    if (!file.startsWith(dir + sep)) return undefined;
+    const binary = await readFile(file).catch(() => undefined);
+    return binary && { binary, type, cacheSeconds: 3600 };
+  }
 
   async handle(req: WebRequest): Promise<unknown> {
     const lang = requestLang(req.headers["x-lang"]);
@@ -119,17 +142,17 @@ export class SessionsServer implements WebApp {
   private async storage() {
     const meta = await this.currentMeta(), records = this.records.length ? this.records : await this.refresh();
     const current = this.binding?.sessionDir?.(), inside = (p: string, dir: string) => p === dir || p.startsWith(dir + sep);
-    const dirs = await Promise.all([this.opts.root, ...(await meta.sessionDirs())].map(async (dir, i) => ({
-      path: dir, isDefault: i === 0,
-      exists: !!(await stat(dir).catch(() => undefined))?.isDirectory(),
-      current: !!current && inside(resolve(current), resolve(dir)),
-      count: records.filter(r => inside(r.path, dir)).length,
+    const dirs = await Promise.all((await this.scanner.locations()).map(async (location, i) => ({
+      path: location.path, source: location.source, isDefault: i === 0 || location.source !== "pi",
+      exists: !!(await stat(location.path).catch(() => undefined))?.isDirectory(),
+      current: !!current && location.source === "pi" && inside(resolve(current), resolve(location.path)),
+      count: records.filter(r => r.source === location.source && inside(r.path, location.path)).length,
     })));
     const data = this.opts.location ? await this.opts.location.resolve() : { dir: dirname(meta.file), source: "default" as const };
     const images = await this.imageDir(), trash = await this.trashDir();
     return {
       images: { ...images, exists: !!(await stat(images.dir).catch(() => undefined))?.isDirectory(), count: records.reduce((n, r) => n + r.images, 0), sessions: records.filter(r => r.images).length },
-      sessions: { dirs, settingsFile: this.opts.settingsFile },
+      sessions: { dirs, settingsFile: this.opts.settingsFile, multipleSources: !!this.opts.sources?.length },
       data: { ...data, defaultDir: this.opts.location?.defaultDir ?? data.dir, movable: !!this.opts.location },
       trash: { dir: trash, exists: !!(await stat(trash).catch(() => undefined))?.isDirectory(), count: await trashCount(trash), days: TRASH_DAYS },
     };
@@ -176,6 +199,7 @@ export class SessionsServer implements WebApp {
     for (const id of ids) {
       const r = this.records.find(x => x.id === id);
       if (!r) { failed.push({ id, error: localize(new LocalizedError("sessionNotFound"), lang) }); continue; }
+      if (!this.canDelete(r)) { skipped.push(id); continue; }
       if (current && resolve(current) === resolve(r.path)) { skipped.push(id); continue; }
       try { await moveToTrash(r.path, trash); deleted.push(id); this.transcripts.delete(r.path); }
       catch (e) { failed.push({ id, error: (e as Error).message }); }
@@ -183,6 +207,10 @@ export class SessionsServer implements WebApp {
     await meta.remove(deleted);
     await this.refresh();
     return { deleted, skipped, failed, trash };
+  }
+
+  private canDelete(record: SessionRecord): boolean {
+    return (record.source ?? "pi") === "pi" && (!this.opts.sources?.length || !!this.binding) && !this.opts.standalone;
   }
 
   private async refresh(): Promise<SessionRecord[]> { return this.records = await this.scanner.scan(); }
@@ -196,7 +224,8 @@ export class SessionsServer implements WebApp {
   private async transcript(path: string, lang: Lang): Promise<TranscriptItem[]> {
     const s = await stat(path), version = `${s.mtimeMs}:${s.size}:${lang}`, hit = this.transcripts.get(path);
     if (hit?.version === version) return hit.items;
-    const items = buildTranscript(await readFile(path, "utf8"), lang);
+    const record = this.records.find(r => r.path === path);
+    const items = buildTranscript(record ? await readSession(record) : await readFile(path, "utf8"), lang);
     this.transcripts.delete(path); this.transcripts.set(path, { version, items });
     while (this.transcripts.size > 5) this.transcripts.delete(this.transcripts.keys().next().value!);
     return items;
@@ -206,7 +235,8 @@ export class SessionsServer implements WebApp {
   private async review(path: string): Promise<{ cwd?: string; tasks: ReviewTask[] }> {
     const s = await stat(path), version = `${s.mtimeMs}:${s.size}`, hit = this.reviews.get(path);
     if (hit?.version === version) return hit;
-    const review = { version, ...buildReview(await readFile(path, "utf8")) };
+    const record = this.records.find(r => r.path === path);
+    const review = { version, ...buildReview(record ? await readSession(record) : await readFile(path, "utf8")) };
     this.reviews.delete(path); this.reviews.set(path, review);
     while (this.reviews.size > 5) this.reviews.delete(this.reviews.keys().next().value!);
     return review;
@@ -235,10 +265,12 @@ export class SessionsServer implements WebApp {
         current: this.binding?.currentSessionFile(),
         home: homedir(),
         model: this.binding?.model()?.model?.id,
-        connected: !!this.binding,
+        connected: !!this.binding || !!this.opts.standalone,
+        capabilities: { ai: !!this.binding?.model()?.model, standalone: !!this.opts.standalone },
         organize: this.organizer.status,
         sessions: records.map(r => ({
-          id: r.id, path: r.path, cwd: r.cwd, name: r.name, model: r.model, parent: r.parent,
+          id: r.id, nativeId: r.nativeId, source: r.source ?? "pi", path: r.path, cwd: r.cwd, name: r.name, model: r.model, parent: r.parent,
+          capabilities: { delete: this.canDelete(r), nativeRename: (r.source ?? "pi") === "pi" && !!this.binding },
           created: r.created, modified: r.modified, count: r.count, images: r.images, firstUser: r.firstUser, meta: meta[r.id] ?? {},
         })),
       };
@@ -272,7 +304,7 @@ export class SessionsServer implements WebApp {
     }
     if (method === "GET" && p === "/api/image") {
       const r = await this.find(url.searchParams.get("id"));
-      const raw = await readFile(r.path, "utf8").catch(() => { throw httpError(404, "readFailed"); });
+      const raw = await readSession(r).catch(() => { throw httpError(404, "readFailed"); });
       const img = findImage(raw, url.searchParams.get("entry") ?? "", Number(url.searchParams.get("n")) || 0);
       if (!img) throw httpError(404, "imageNotFound");
       // An entry's images never change, so the browser may keep them.
@@ -293,15 +325,19 @@ export class SessionsServer implements WebApp {
       if (Array.isArray(body.tags)) patch.tags = body.tags;
       const meta = await this.meta.patch(r.id, patch);
       let warning: string | undefined;
-      if (patch.title && this.binding) {
+      if (patch.title && this.binding && (r.source ?? "pi") === "pi") {
         try { await this.binding.rename(r.path, meta.title!); } catch (e) { warning = localize(new LocalizedError("renameWriteFailed", [(e as Error).message]), lang); }
       }
       return { meta, warning };
     }
     if (method === "POST" && p === "/api/open") {
       const r = await this.find(body.id);
-      if (!this.binding) throw httpError(503, "switching");
-      return this.binding.open(r.path, lang);
+      if ((r.source ?? "pi") === "pi" && this.binding) return this.binding.open(r.path, lang);
+      if (this.opts.openSession && ((r.source ?? "pi") !== "pi" || this.opts.standalone)) return this.opts.openSession(r, lang);
+      throw httpError(503, "switching");
+    }
+    if (method === "GET" && p === "/api/resume-command") {
+      return { command: resumeCommand(await this.find(url.searchParams.get("id"))) };
     }
     if (method === "POST" && p === "/api/organize") {
       const ctx = this.binding?.model();
@@ -325,7 +361,8 @@ export class SessionsServer implements WebApp {
       const model = typeof body.model === "string" && body.model ? pickModel(ctx, body.model) : ctx.model;
       if (!model) throw httpError(409, "noModel");
       const [records, meta] = await Promise.all([this.refresh(), this.meta.all()]);
-      return { ...(await askSessions({ model, modelRegistry: ctx.modelRegistry }, query, records, meta, signal, new Date(), lang)), model: model.id };
+      const candidates = ["pi", "claude", "codex"].includes(body.source) ? records.filter(r => r.source === body.source) : records;
+      return { ...(await askSessions({ model, modelRegistry: ctx.modelRegistry }, query, candidates, meta, signal, new Date(), lang)), model: model.id };
     }
     if (method === "GET" && p === "/api/models") {
       const ctx = this.binding?.model();

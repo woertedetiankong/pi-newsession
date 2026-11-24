@@ -10,6 +10,8 @@ import { SessionScanner } from "./src/scan.ts";
 import { focusTerminal } from "./src/focus.ts";
 import { DataLocation, openPath } from "./src/storage.ts";
 import { localize, terminalLang, text } from "./src/i18n.ts";
+import { externalRoots, localPaths } from "./src/local.ts";
+import { launchSession } from "./src/launch.ts";
 
 // The server outlives a single extension runtime (session switches rebuild the runtime), so it lives on globalThis.
 const shared = globalThis as typeof globalThis & { __piSessionsServer?: SessionsServer };
@@ -88,6 +90,7 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
       server = new SessionsServer({
         root: p.root, metaFile: join((await p.location.resolve()).dir, "meta.json"), location: p.location, settingsFile: p.settingsFile,
         agentDir: p.agent, webFile: fileURLToPath(new URL("./web/index.html", import.meta.url)),
+        sources: externalRoots(localPaths()), openSession: launchSession,
       });
       shared.__piSessionsServer = server;
     }

@@ -1,13 +1,16 @@
 {
   "name": "pi-sessions",
   "version": "0.3.3",
-  "description": "Browse, search and organize pi sessions by project and date",
+  "description": "Browse, search and organize local pi, Claude Code and Codex sessions",
   "type": "module",
   "license": "MIT",
   "files": [
     "index.ts",
+    "bin",
     "src",
     "web",
+    "docs/local-sessions.md",
+    "docs/local-sessions.jpg",
     "README.md",
     "LICENSE"
   ],
@@ -20,7 +23,11 @@
       "./index.ts"
     ]
   },
+  "bin": {
+    "agent-sessions": "./bin/agent-sessions.mjs"
+  },
   "scripts": {
+    "start": "node ./bin/agent-sessions.mjs",
     "check": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts"
   },
@@ -33,7 +40,6 @@
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^1.1.0",
     "@types/node": "^24.0.0",
-    "tsx": "^4.20.0",
     "typescript": "^5.9.0"
   },
   "peerDependenciesMeta": {
@@ -44,5 +50,8 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/woertedetiankong/pi-newsession.git"
+  },
+  "dependencies": {
+    "tsx": "^4.23.15"
   }
 }

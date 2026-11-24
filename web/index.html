@@ -3,8 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>pi 会话管理</title>
+<title>本机会话管理</title>
 <script src="/hub.js"></script>
+<link rel="stylesheet" href="vendor/hljs-theme.css">
+<script src="vendor/markdown-it.min.js"></script>
+<script src="vendor/markdown-it-task-lists.min.js"></script>
+<script src="vendor/purify.min.js"></script>
+<script src="vendor/highlight.min.js"></script>
 <style>
 :root {
   --bg: #f6f6f3; --panel: #ffffff; --side: #efefea; --line: #e4e3dc; --line-strong: #d3d2c9;
@@ -186,7 +191,7 @@ section.preview { overflow-y: auto; background: var(--panel); }
 .msg { margin-bottom: 12px; display: flex; gap: 10px; }
 .msg .who { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; background: var(--user); color: var(--muted); }
 .msg.assistant .who { background: var(--accent-soft); color: var(--accent-text); }
-.msg .body { flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; font-size: 13.5px; }
+.msg .body { flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.6; }
 .msg.user .body { background: var(--user); border-radius: 8px; padding: 6px 10px; }
 .more { color: var(--faint); font-size: 12.5px; text-align: center; padding: 6px; border-top: 1px dashed var(--line); margin-top: 8px; }
 
@@ -197,21 +202,36 @@ section.preview { overflow-y: auto; background: var(--panel); }
 @keyframes spin { to { transform: rotate(360deg); } }
 /* 完整对话 */
 .md { white-space: normal; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
 .md p { margin: 0 0 8px; }
 .md p:last-child { margin-bottom: 0; }
 .md ul, .md ol { margin: 4px 0 8px; padding-left: 22px; }
 .md li { margin: 2px 0; }
+.md li > p { margin: 0 0 4px; }
+.md li > ul, .md li > ol { margin: 2px 0 4px; }
+.md ul ul { list-style-type: circle; } .md ul ul ul { list-style-type: square; }
+.md li::marker { color: var(--muted); }
+.md .task-list-item { list-style: none; }
+.md .task-list-item > input, .md .task-list-item > p > input { margin: 0 6px 0 -18px; vertical-align: -1px; accent-color: var(--accent); }
 .md code { font: 12.5px var(--mono); background: var(--user); border-radius: 4px; padding: 1px 4px; }
 .md pre, .tool pre { font: 12px/1.5 var(--mono); background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; overflow-x: auto; white-space: pre; margin: 6px 0; max-height: 420px; overflow-y: auto; }
-.md pre code { background: none; padding: 0; }
+.md pre code, .md pre code.hljs { background: none; padding: 0; color: inherit; overflow: visible; display: inline; }
+.md .codebox .code-lang { position: absolute; top: 11px; right: 10px; font: 10.5px var(--mono); color: var(--faint); pointer-events: none; user-select: none; transition: opacity .12s; }
+.md .codebox:hover .code-lang { opacity: 0; }
 .md blockquote { margin: 6px 0; padding-left: 10px; border-left: 3px solid var(--line-strong); color: var(--muted); }
 .md a { color: var(--accent-text); }
-.md-h { font-weight: 650; margin: 10px 0 4px; }
-.md-h1 { font-size: 16px; } .md-h2 { font-size: 15px; } .md-h3 { font-size: 14px; }
+.md hr { border: 0; border-top: 1px solid var(--line-strong); margin: 12px 0; }
+.md em { font-style: italic; }
+.md del, .md s { color: var(--muted); text-decoration-color: var(--faint); }
+.md-h, .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { display: block; font-weight: 650; margin: 12px 0 4px; line-height: 1.4; color: inherit; letter-spacing: normal; }
+.md-h1, .md h1 { font-size: 16px; } .md-h2, .md h2 { font-size: 15px; } .md-h3, .md h3 { font-size: 14px; }
+.md h4, .md h5, .md h6 { font-size: 13.5px; } .md h6 { color: var(--muted); }
 .md-table { overflow-x: auto; margin: 6px 0; }
-.md table { border-collapse: collapse; font-size: 12.5px; }
+.md table { border-collapse: collapse; font-size: 12.5px; line-height: 1.5; }
 .md th, .md td { border: 1px solid var(--line-strong); padding: 4px 8px; text-align: left; vertical-align: top; }
-.md th { background: var(--bg); }
+.md th { background: var(--bg); white-space: nowrap; }
+.md td code { white-space: nowrap; }
 .msg.user .body { white-space: normal; }
 .tool { border: 1px solid var(--line); border-radius: 7px; margin: 6px 0; background: var(--panel); }
 .tool > summary { cursor: pointer; padding: 5px 10px; font-size: 12.5px; display: flex; gap: 8px; align-items: center; list-style: none; }
@@ -328,6 +348,7 @@ dialog.dlg::backdrop { background: rgba(0,0,0,.35); }
 <div class="app" id="app">
   <header>
     <div class="brand"><span class="logo">π</span><span class="brand-name">会话</span></div>
+    <select class="ai-model" id="source" aria-label="会话来源"></select>
     <nav id="pi-web-nav"></nav>
     <label class="search">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
@@ -360,7 +381,7 @@ const TOKEN = window.piWeb ? window.piWeb.token : (() => {
 
 const state = {
   sessions: [], current: null, model: null, connected: true, organize: { running: false }, error: "",
-  titleMode: "ai", q: "", hits: null,
+  titleMode: "ai", q: "", hits: null, source: "all", capabilities: { ai: false, standalone: false },
   scope: { kind: "all" }, openProjects: new Set(), selected: null, collapsed: new Set(["frag"]),
   editing: false, tx: new Map(), pvKey: null, loaded: false, ai: null,
   aiModel: "", models: [], chatOnly: false, pvTab: "chat", rv: new Map(), explaining: new Set(),
@@ -394,12 +415,15 @@ const LANG = window.piWeb && window.piWeb.lang === "en" ? "en" : "zh";
 document.documentElement.lang = LANG === "zh" ? "zh-CN" : "en";
 const L = {
   zh: {
-    title: "pi 会话管理", brand: "会话", searchPh: "搜索内容，或 @项目 #标签 上周 8月",
+    title: "本机会话管理", brand: "会话", searchPh: "搜索内容，或 @项目 #标签 上周 8月",
+    allSources: "全部来源", source: "来源", openIn: name => `在 ${name} 中打开`, copyResume: "复制恢复命令",
+    renamedLocal: "已更新管理器中的标题", editTags: "编辑标签", tagsPrompt: "标签（用逗号分隔，最多 5 个）", tagsSaved: "已更新标签",
+    aiUnavailable: "AI 功能需从 pi 中运行 /sessions 使用", nativeFiles: "原始会话文件由各工具管理，可通过启动参数指定读取目录。",
     askBtn: "✨ 用 AI 找", askTip: "用右侧选择的模型（默认跟随 pi）理解你的描述，在所有会话的标题和摘要中查找。会把你的描述和会话的标题、摘要、首句发送给该模型的服务商，每次 1 次模型请求。快捷键 Shift+Enter",
     modelTip: "「用 AI 找」和「AI 整理」使用的模型（只列出 pi 中已配置登录或 API Key 的模型）",
     titleTip: "标题", aiTitles: "整理后标题", rawTitles: "原始标题", modified: "最后活动", created: "创建时间",
     loading: "正在读取会话…", saveImage: "下载图片", close: "关闭",
-    offline: "连接不到 pi。pi 可能已经退出，在 pi 中运行 /sessions 重新打开。", requestFailed: n => "请求失败 " + n,
+    offline: "连接不到本机会话服务，请重新启动管理器。", requestFailed: n => "请求失败 " + n,
     weekdays: ["周日", "周一", "周二", "周三", "周四", "周五", "周六"],
     unknownDir: "未知目录", emptySession: "（空会话）",
     qProject: "项目 ", qTag: "标签 ", qTime: "时间 ",
@@ -416,8 +440,8 @@ const L = {
     followPi: m => `跟随 pi${m ? "（" + m + "）" : "当前模型"}`,
     closeEsc: "关闭 (Esc)", loadingShort: "正在读取…", openTip: "在文件管理器中打开", open: "打开",
     defaultLoc: "默认位置", customLoc: "自定义位置", inUse: "pi 正在使用", nSessions: n => `${n} 个会话`, dirMissing: "目录不存在",
-    envLoc: "由环境变量 PI_SESSIONS_DATA_DIR 指定",
-    envFine: "要在这里修改，请先去掉环境变量 <code>PI_SESSIONS_DATA_DIR</code> 并重启 pi。",
+    envLoc: "由 PI_SESSIONS_DATA_DIR 或 --data-dir 指定",
+    envFine: "要在这里修改，请先去掉环境变量 <code>PI_SESSIONS_DATA_DIR</code> 或 <code>--data-dir</code> 参数，并重启管理器。",
     movePh: "新位置，例如 ~/Dropbox/pi-sessions", moveHere: "移到这里",
     moveFine: "现有数据会合并到新位置（那里已有的数据会保留），立即生效，不用重启 pi。原位置的文件会留着，确认没问题后可以自己删掉。访问令牌始终留在本机，不会移动。",
     restoreDefault: "恢复默认位置", convFiles: "对话文件", convFilesSub: "由 pi 保存，插件只读取", howMove: "怎么换位置",
@@ -433,7 +457,7 @@ const L = {
     movedTo: p => "插件数据已移到 " + p, copied: "已复制", copyThis: "复制这一项：", exporting: "正在导出…", exportDirSet: p => "导出位置已设为 " + p,
     exportNone: "没有可导出的图片", exported: n => `已导出 ${n} 张图片`, exportedAllOld: "（都已导出过）", exportedSome: w => `（新写入 ${w} 张，其余已导出过）`,
     exportConfirm: (n, dir) => `把这个会话的 ${n} 张图片导出到：\n${dir}\n\n会放在以会话标题命名的子文件夹里，完成后自动打开。\n要换位置，点左栏「存储位置」。`,
-    searchResults: "搜索结果", noSessions: "还没有会话", noSessionsHint: "在 pi 里聊几句之后，会话会出现在这里",
+    searchResults: "搜索结果", noSessions: "还没有会话", noSessionsHint: "Claude Code、Codex 或 pi 保存的本机会话会出现在这里",
     noMatch: "没有找到会话", noMatchHint: "试试更短的关键词，或去掉 @项目 / 时间条件",
     shotTip: "点击放大 / 下载", image: "图片", imageFailed: "[图片读取失败]",
     copyMsgTip: "复制这条消息的原始 Markdown", copyAll: "复制全文",
@@ -474,12 +498,15 @@ const L = {
     emptyTrash: n => `清空回收站（${n} 个）`, emptyConfirm: n => `永久删除回收站里的 ${n} 个会话？\n\n清空后无法恢复。`, emptied: "回收站已清空",
   },
   en: {
-    title: "pi Sessions", brand: "Sessions", searchPh: "Search, or @project #tag last-week aug",
+    title: "Local Agent Sessions", brand: "Sessions", searchPh: "Search, or @project #tag last-week aug",
+    allSources: "All sources", source: "Source", openIn: name => `Open in ${name}`, copyResume: "Copy resume command",
+    renamedLocal: "Updated the manager's title", editTags: "Edit tags", tagsPrompt: "Tags (comma separated, up to 5)", tagsSaved: "Updated tags",
+    aiUnavailable: "AI tools require the pi /sessions entry", nativeFiles: "Each tool manages its original logs. Startup options can override the directories read.",
     askBtn: "✨ Ask AI", askTip: "Uses the model chosen on the right (pi's by default) to understand your description and find sessions by title and summary. Sends your description and each session's title, summary and first line to that model's provider; one model request per search. Shortcut: Shift+Enter",
     modelTip: "Model used by Ask AI and AI organize (only models with a login or API key in pi)",
     titleTip: "Title", aiTitles: "AI titles", rawTitles: "Raw titles", modified: "Last active", created: "Created",
     loading: "Loading sessions…", saveImage: "Download image", close: "Close",
-    offline: "Cannot reach pi. It may have exited; run /sessions in pi to reopen this page.", requestFailed: n => "Request failed " + n,
+    offline: "Cannot reach the local session service. Restart the manager.", requestFailed: n => "Request failed " + n,
     weekdays: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
     unknownDir: "unknown folder", emptySession: "(empty session)",
     qProject: "project ", qTag: "tag ", qTime: "time ",
@@ -496,8 +523,8 @@ const L = {
     followPi: m => m ? `Follow pi (${m})` : "Follow pi's current model",
     closeEsc: "Close (Esc)", loadingShort: "Loading…", openTip: "Open in the file manager", open: "Open",
     defaultLoc: "Default location", customLoc: "Custom location", inUse: "in use by pi", nSessions: n => `${n} sessions`, dirMissing: "folder missing",
-    envLoc: "Set by the PI_SESSIONS_DATA_DIR environment variable",
-    envFine: "To change it here, remove the <code>PI_SESSIONS_DATA_DIR</code> environment variable and restart pi.",
+    envLoc: "Set by PI_SESSIONS_DATA_DIR or --data-dir",
+    envFine: "To change it here, unset <code>PI_SESSIONS_DATA_DIR</code> or remove <code>--data-dir</code>, then restart the manager.",
     movePh: "New location, e.g. ~/Dropbox/pi-sessions", moveHere: "Move here",
     moveFine: "Existing data is merged into the new location (data already there is kept) and takes effect immediately, no restart needed. Files in the old location stay; delete them yourself once everything looks right. The access token always stays on this machine.",
     restoreDefault: "Restore default location", convFiles: "Conversation files", convFilesSub: "saved by pi, only read here", howMove: "How to change the location",
@@ -513,7 +540,7 @@ const L = {
     movedTo: p => "Extension data moved to " + p, copied: "Copied", copyThis: "Copy this:", exporting: "Exporting…", exportDirSet: p => "Export folder set to " + p,
     exportNone: "No images to export", exported: n => `Exported ${n} images`, exportedAllOld: " (all exported before)", exportedSome: w => ` (${w} new, the rest exported before)`,
     exportConfirm: (n, dir) => `Export this session's ${n} images to:\n${dir}\n\nThey go into a subfolder named after the session, and the folder opens when done.\nTo change the location, click "Storage" on the left.`,
-    searchResults: "Search results", noSessions: "No sessions yet", noSessionsHint: "Sessions appear here after you chat in pi",
+    searchResults: "Search results", noSessions: "No sessions yet", noSessionsHint: "Local Claude Code, Codex and pi sessions appear here",
     noMatch: "No sessions found", noMatchHint: "Try shorter keywords, or drop @project / time filters",
     shotTip: "Click to enlarge / download", image: "image", imageFailed: "[image failed to load]",
     copyMsgTip: "Copy this message's original Markdown", copyAll: "Copy all",
@@ -557,6 +584,8 @@ const L = {
 function applyStatic() {
   document.title = L.title;
   document.querySelector(".brand-name").textContent = L.brand;
+  $("source").setAttribute("aria-label", L.source);
+  $("source").innerHTML = ["all", "pi", "claude", "codex"].map(v => `<option value="${v}">${esc(v === "all" ? L.allSources : sourceName(v))}</option>`).join("");
   $("q").placeholder = L.searchPh;
   $("ask").textContent = L.askBtn; $("ask").title = L.askTip;
   $("aiModel").title = L.modelTip; $("aiModel").options[0].textContent = L.followPi("");
@@ -655,6 +684,7 @@ function afterFilter() { const v = visible(); if (!v.some(s => s.id === state.se
 function visible() {
   const pq = parseQuery(state.q), sc = state.scope;
   return state.sessions.filter(s => {
+    if (state.source !== "all" && (s.source || "pi") !== state.source) return false;
     if (sc.kind === "archived") { if (!s.meta.archived) return false; }
     else if (s.meta.archived && !state.q) return false;
     if (sc.kind === "pinned" && !s.meta.pinned) return false;
@@ -685,15 +715,18 @@ function groups(list) {
 
 // ---- 渲染 ----
 function renderHeader() {
+  $("source").value = state.source;
+  $("ask").hidden = !state.capabilities.ai;
+  $("aiModel").hidden = !state.capabilities.ai;
   for (const b of $("titleSeg").children) b.classList.toggle("on", b.dataset.v === state.titleMode);
   const o = state.organize, b = $("organize"), pending = state.sessions.filter(needsOrganize).length;
-  b.hidden = !o.running && !pending;
+  b.hidden = !state.capabilities.ai || (!o.running && !pending);
   b.classList.toggle("primary", !o.running);
   b.textContent = o.running ? L.organizing(o.done + o.failed, o.total) : L.organizeN(pending);
   b.title = o.running ? L.organizeCancelTip : L.organizeTip(aiModelName());
 }
 function renderSide() {
-  const list = state.sessions, live = list.filter(s => !s.meta.archived);
+  const list = state.sessions.filter(s => state.source === "all" || (s.source || "pi") === state.source), live = list.filter(s => !s.meta.archived);
   const byProj = new Map();
   for (const s of live) { if (!byProj.has(s.cwd)) byProj.set(s.cwd, []); byProj.get(s.cwd).push(s); }
   const projs = [...byProj.entries()].sort((a, b) => Math.max(...b[1].map(T)) - Math.max(...a[1].map(T)));
@@ -734,14 +767,14 @@ function card(s, pq, showProj, line) {
   const snip = pq.words.length ? state.hits?.get(s.id) : null, sum = snip || s.meta.summary || (state.titleMode === "ai" && s.meta.title ? s.firstUser : "");
   const raw = !(state.titleMode === "ai" && s.meta.title) && !s.name;
   return `<button class="card${state.selected === s.id && !pick ? " on" : ""}${pick ? " pick" : ""}${picked ? " picked" : ""}" data-id="${esc(s.id)}"${pick && isCurrent(s) ? ` title="${esc(L.delCurrentTip)}"` : ""}>
-    <div class="row1">${pick ? `<span class="check${picked ? " on" : isCurrent(s) ? " off" : ""}"></span>` : `<span class="dot${active(s) ? " active" : ""}" title="${active(s) ? L.activeTip : L.idleTip}"></span>`}
+    <div class="row1">${pick ? `<span class="check${picked ? " on" : !canDelete(s) ? " off" : ""}"></span>` : `<span class="dot${active(s) ? " active" : ""}" title="${active(s) ? L.activeTip : L.idleTip}"></span>`}
       <span class="title${raw ? " raw" : ""}">${highlight(title(s), pq.words)}</span>
       ${isCurrent(s) ? `<span class="chip" style="font-size:11px">${esc(L.current)}</span>` : ""}
       ${s.meta.pinned ? `<span class="pin">📌</span>` : ""}
       <span class="time num">${fmtFull(T(s))}</span></div>
     ${line ? `<div class="reason">✨ ${esc(line)}</div>` : ""}
     ${sum ? `<div class="summary">${highlight(sum, pq.words)}</div>` : ""}
-    <div class="meta">${showProj ? `<span class="proj">${esc(projName(s.cwd))}</span>` : ""}<span class="num">${esc(L.msgs(s.count))}</span>${tags(s).map(t => `<span class="tag">#${esc(t)}</span>`).join("")}${s.meta.archived ? `<span>${esc(L.archivedTag)}</span>` : ""}</div>
+    <div class="meta"><span class="tag">${esc(sourceName(s.source))}</span>${showProj ? `<span class="proj">${esc(projName(s.cwd))}</span>` : ""}<span class="num">${esc(L.msgs(s.count))}</span>${tags(s).map(t => `<span class="tag">#${esc(t)}</span>`).join("")}${s.meta.archived ? `<span>${esc(L.archivedTag)}</span>` : ""}</div>
   </button>`;
 }
 function aiList() {
@@ -760,13 +793,14 @@ function aiList() {
 }
 let askAbort;
 async function ask() {
+  if (!state.capabilities.ai) return toast(L.aiUnavailable);
   const query = state.q.trim();
   if (!query) { $("q").focus(); toast(L.askEmpty); return; }
   askAbort?.abort(); askAbort = new AbortController();
   const signal = askAbort.signal;
   state.ai = { query, loading: true }; renderList();
   try {
-    const r = await api("/api/ask", { query, model: state.aiModel || undefined }, signal);
+    const r = await api("/api/ask", { query, model: state.aiModel || undefined, source: state.source }, signal);
     if (state.ai?.query !== query) return;
     state.ai = { query, loading: false, ...r };
     state.selected = r.results[0]?.id ?? state.selected;
@@ -807,7 +841,7 @@ function renderStorage(error = "", imgError = "") {
   if (st.error) { $("storage").innerHTML = head + `<div class="empty">${esc(st.error)}</div>`; return; }
   const openBtn = (p, ok = true) => ok ? `<button class="btn" data-st="open" data-path="${esc(p)}" title="${esc(L.openTip)}">${esc(L.open)}</button>` : "";
   const dirs = st.sessions.dirs.map(d => `<div class="loc"><div><div class="path">${esc(tilde(d.path))}</div>
-    <div class="loc-meta">${[esc(d.isDefault ? L.defaultLoc : L.customLoc), d.current ? `<b>${esc(L.inUse)}</b>` : "", esc(d.exists ? L.nSessions(d.count) : L.dirMissing)].filter(Boolean).join(" · ")}</div></div>${openBtn(d.path, d.exists)}</div>`).join("");
+    <div class="loc-meta">${[esc(sourceName(d.source)), esc(d.isDefault ? L.defaultLoc : L.customLoc), d.current ? `<b>${esc(L.inUse)}</b>` : "", esc(d.exists ? L.nSessions(d.count) : L.dirMissing)].filter(Boolean).join(" · ")}</div></div>${openBtn(d.path, d.exists)}</div>`).join("");
   const data = st.data, where = esc({ default: L.defaultLoc, config: L.customLoc, env: L.envLoc }[data.source]);
   let move = "";
   if (data.source === "env") move = `<p class="fine">${L.envFine}</p>`;
@@ -816,6 +850,7 @@ function renderStorage(error = "", imgError = "") {
     <p class="fine">${esc(L.moveFine)}${data.source === "config" ? ` <button data-st="reset">${esc(L.restoreDefault)}</button>` : ""}</p>`;
   $("storage").innerHTML = head + `
     <section><h3>${esc(L.convFiles)}<span class="sub">${esc(L.convFilesSub)}</span></h3>${dirs}
+      ${st.sessions.multipleSources ? `<p class="fine">${esc(L.nativeFiles)}</p>` : ""}
       <details class="how"><summary>${esc(L.howMove)}</summary>
         <p>${L.howP1(esc(tilde(st.sessions.settingsFile || "~/.pi/agent/settings.json")))}</p>
         <pre><span>${esc(SESSION_DIR_EXAMPLE)}</span><button data-st="copy">${esc(L.copy)}</button></pre>
@@ -891,8 +926,8 @@ function renderList() {
   const showProj = !["project", "bucket"].includes(state.scope.kind);
   let h = "";
   if (state.error) h += `<div class="banner" style="background:color-mix(in srgb, var(--warn) 18%, transparent)">${esc(state.error)}</div>`;
-  const picked = pickedVisible(), pickable = list.filter(s => !isCurrent(s));
-  const bar = !state.picking ? (list.length ? `<div class="pick-bar"><button class="btn sm" data-pick="on" title="${esc(L.pickModeTip)}">${esc(L.pickMode)}</button></div>` : "") :
+  const picked = pickedVisible(), pickable = list.filter(canDelete);
+  const bar = !state.picking ? (pickable.length ? `<div class="pick-bar"><button class="btn sm" data-pick="on" title="${esc(L.pickModeTip)}">${esc(L.pickMode)}</button></div>` : "") :
     `<div class="pick-bar">${esc(L.pickedN(picked.length))}
       <button class="btn sm" data-pick="${picked.length && picked.length === pickable.length ? "none" : "all"}">${esc(picked.length && picked.length === pickable.length ? L.pickNone : L.pickAll)}</button>
       <button class="btn sm danger primary" data-pick="delete"${picked.length ? "" : " disabled"}>${esc(L.delN(picked.length))}</button>
@@ -903,7 +938,7 @@ function renderList() {
   else if (!list.length) h += `<div class="empty">${esc(L.noMatch)}<br><span style="font-size:12.5px">${esc(L.noMatchHint)}</span></div>`;
   for (const g of gs) {
     const col = state.collapsed.has(g.key);
-    const own = g.items.filter(s => !isCurrent(s)), n = own.filter(s => state.picked.has(s.id)).length;
+    const own = g.items.filter(canDelete), n = own.filter(s => state.picked.has(s.id)).length;
     const check = state.picking && own.length ? `<span class="check${n === own.length ? " on" : n ? " part" : ""}" data-pick-group="${esc(g.key)}" title="${esc(L.pickGroupTip)}"></span>` : "";
     h += `<div class="group"><button class="group-title" data-group="${esc(g.key)}">${check}<span class="caret${col ? "" : " open"}">▸</span>${esc(g.label)}<span class="num">${g.items.length}</span><span class="line"></span></button>`;
     if (!col) for (const s of g.items) h += card(s, pq, showProj);
@@ -911,13 +946,44 @@ function renderList() {
   }
   $("list").innerHTML = h;
 }
-// ---- Markdown：先整体转义，再做有限的格式转换，对话内容无法注入 HTML ----
+// ---- Markdown: markdown-it (html off) → DOMPurify. Fenced code goes through codeBox() so copy buttons work. ----
+const HL_LIMIT = 100_000;
+const mdi = (() => {
+  if (typeof window.markdownit !== "function" || !window.DOMPurify?.sanitize) return null;
+  const m = window.markdownit({ html: false, linkify: true, breaks: true, typographer: false });
+  if (typeof window.markdownitTaskLists === "function") m.use(window.markdownitTaskLists, { enabled: false });
+  m.linkify.set({ fuzzyEmail: false });
+  m.renderer.rules.fence = (tokens, i) => {
+    const t = tokens[i], lang = (t.info || "").trim().split(/\s+/)[0].toLowerCase(), code = t.content.replace(/\n$/, "");
+    let html = esc(code), cls = "";
+    const hl = window.hljs;
+    if (hl && lang && code.length <= HL_LIMIT && hl.getLanguage(lang)) {
+      try { html = hl.highlight(code, { language: lang, ignoreIllegals: true }).value; cls = ` class="hljs language-${esc(lang)}"`; } catch {}
+    }
+    return codeBox(`<code${cls}>${html}</code>`).replace('<div class="codebox">', `<div class="codebox">${lang ? `<span class="code-lang">${esc(lang)}</span>` : ""}`);
+  };
+  m.renderer.rules.code_block = (tokens, i) => codeBox(`<code>${esc(tokens[i].content.replace(/\n$/, ""))}</code>`);
+  m.renderer.rules.table_open = () => '<div class="md-table"><table>';
+  m.renderer.rules.table_close = () => "</table></div>";
+  window.DOMPurify.addHook("afterSanitizeAttributes", node => {
+    if (node.tagName === "A" && node.hasAttribute("href")) { node.setAttribute("target", "_blank"); node.setAttribute("rel", "noopener noreferrer"); }
+    if (node.tagName === "INPUT") { node.setAttribute("disabled", ""); node.setAttribute("type", "checkbox"); }
+  });
+  return m;
+})();
+const PURIFY = { ADD_ATTR: ["target"], FORBID_TAGS: ["style", "form", "img"], FORBID_ATTR: ["id", "name"] };
+function md(src) {
+  const text = String(src ?? "").replace(/\r\n?/g, "\n");
+  if (!mdi) return mdBasic(text);
+  try { return window.DOMPurify.sanitize(mdi.render(text), PURIFY); } catch { return mdBasic(text); }
+}
+// ---- Fallback Markdown (vendor scripts missing): escape everything first, then a few formats ----
 function inlineMd(s) {
   return esc(s).split(/(`[^`\n]+`)/).map(seg => seg.length > 1 && seg.startsWith("`") && seg.endsWith("`") ? `<code>${seg.slice(1, -1)}</code>` :
     seg.replace(/\*\*([^*\n]+?)\*\*/g, "<strong>$1</strong>")
        .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')).join("");
 }
-function md(src) {
+function mdBasic(src) {
   const lines = String(src).replace(/\r\n?/g, "\n").split("\n"), out = [];
   const listRe = /^\s*([-*+]|\d+[.)])\s+/, special = l => /^\s*(```|~~~)/.test(l) || /^#{1,6}\s/.test(l) || listRe.test(l) || /^\s*>/.test(l) || /^\s*\|.*\|\s*$/.test(l);
   for (let i = 0; i < lines.length;) {
@@ -938,7 +1004,7 @@ function md(src) {
     if (/^\s*>/.test(l)) {
       const buf = [];
       while (i < lines.length && /^\s*>/.test(lines[i])) buf.push(lines[i++].replace(/^\s*>\s?/, ""));
-      out.push(`<blockquote>${md(buf.join("\n"))}</blockquote>`); continue;
+      out.push(`<blockquote>${mdBasic(buf.join("\n"))}</blockquote>`); continue;
     }
     if (/^\s*\|.*\|\s*$/.test(l)) {
       const rows = [];
@@ -1075,23 +1141,26 @@ function openTx(s, fresh) {
 }
 
 function headHtml(s) {
-  const pq = parseQuery(state.q), parent = s.parent && state.sessions.find(x => x.path === s.parent);
+  const pq = parseQuery(state.q), parent = s.parent && state.sessions.find(x => x.path === s.parent || (x.source === s.source && x.nativeId === s.parent));
   const organizing = state.organize.running, reading = $("app").classList.contains("reading");
   return `<button class="btn back" data-act="back" style="margin-bottom:12px">${esc(L.backToList)}</button>
     <h1>${state.editing ? `<input id="rename" value="${esc(title(s))}" maxlength="80">` : highlight(title(s), pq.words)}${isCurrent(s) ? ` <span class="chip" style="font-size:12px">${esc(L.currentSession)}</span>` : ""}</h1>
     <div class="raw-title">${esc(L.firstLine)}${esc(s.firstUser || L.noneParen)}${esc(s.meta.titleSource === "manual" ? L.manualTitle : s.meta.titleSource === "ai" ? L.aiTitle : "")}</div>
     <div class="actions">
-      <button class="btn primary" data-act="open" ${isCurrent(s) ? "disabled style='opacity:.5;cursor:default'" : ""}>${esc(L.openInPi)}</button>
+      <button class="btn primary" data-act="open" ${isCurrent(s) ? "disabled style='opacity:.5;cursor:default'" : ""}>${esc(L.openIn(sourceName(s.source)))}</button>
+      <button class="btn" data-act="copy-resume">${esc(L.copyResume)}</button>
       <button class="btn" data-act="rename">${esc(L.rename)}</button>
       <button class="btn" data-act="pin">${esc(s.meta.pinned ? L.unpin : L.pin)}</button>
       <button class="btn" data-act="archive">${esc(s.meta.archived ? L.unarchive : L.archive)}</button>
+      <button class="btn" data-act="tags">${esc(L.editTags)}</button>
       ${s.images ? `<button class="btn" data-act="export-images" title="${esc(L.exportTip)}">${esc(L.exportN(s.images))}</button>` : ""}
-      <button class="btn" data-act="organize" ${organizing ? "disabled style='opacity:.5'" : ""}>✨ ${esc(s.meta.organizedAt ? L.regenerate : L.aiTitleBtn)}</button>
+      ${state.capabilities.ai ? `<button class="btn" data-act="organize" ${organizing ? "disabled style='opacity:.5'" : ""}>✨ ${esc(s.meta.organizedAt ? L.regenerate : L.aiTitleBtn)}</button>` : ""}
       <button class="btn focus-btn" data-act="reading" title="${esc(L.focusTip)}">${esc(reading ? L.exitFocus : L.focus)}</button>
-      <button class="btn danger" data-act="delete"${isCurrent(s) ? ` disabled title="${esc(L.delCurrentTip)}"` : ""}>${esc(L.del)}</button>
+      ${s.capabilities?.delete ? `<button class="btn danger" data-act="delete"${isCurrent(s) ? ` disabled title="${esc(L.delCurrentTip)}"` : ""}>${esc(L.del)}</button>` : ""}
     </div>
     ${s.meta.summary ? `<div class="summary-box"><div class="lbl">${esc(L.summary)}</div>${highlight(s.meta.summary, pq.words)}</div>` : ""}
     <dl class="facts">
+      <dt>${esc(L.source)}</dt><dd>${esc(sourceName(s.source))}</dd>
       <dt>${esc(L.project)}</dt><dd>${esc(tilde(s.cwd) || L.unknown)}</dd>
       <dt>${esc(L.modified)}</dt><dd class="num">${fmtFull(s.modified)}</dd>
       <dt>${esc(L.created)}</dt><dd class="num">${fmtFull(s.created)}</dd>
@@ -1146,6 +1215,7 @@ function diffHtml(patch) {
   }).join("")}</div>`;
 }
 function explanationHtml(task, ex) {
+  if (!ex && !state.capabilities.ai) return "";
   if (!ex) {
     const busy = state.explaining.has(`${state.selected}#${task.n}`);
     return `<button class="btn" data-explain="${task.n}" title="${esc(L.explainTip)}"${busy ? " disabled" : ""}>${esc(busy ? L.explaining : L.explain)}</button>`;
@@ -1164,7 +1234,7 @@ function explanationHtml(task, ex) {
     ${verified.length ? `<h4>${esc(L.exVerified)}</h4>${verified.length > 1 ? `<ol>${verified.map(v => `<li>${rich(v)}</li>`).join("")}</ol>` : `<div>${rich(verified[0])}</div>`}` : ""}
     ${ex.learn.length ? `<h4>${esc(L.exLearn)}</h4>${ex.learn.map(l => `<div class="learn"><b>${rich(l.concept)}</b><div>${rich(l.plain ?? l.explain ?? "")}</div>${l.here ? `<div class="here">${esc(L.exHere)}${rich(l.here)}</div>` : ""}</div>`).join("")}` : ""}
     ${ex.terms?.length ? `<h4>${esc(L.exTerms)}</h4><dl class="terms">${ex.terms.map(t => `<dt>${rich(t.term)}</dt><dd>${rich(t.meaning)}</dd>`).join("")}</dl>` : ""}
-    <div style="margin-top:10px">${stale ? `<span class="stale">${esc(L.staleExplain)} · </span>` : ""}<button class="btn" data-explain="${task.n}" style="font-size:12px;padding:2px 8px"${busy ? " disabled" : ""}>${esc(busy ? L.explaining : L.reexplain)}</button></div>
+    ${state.capabilities.ai ? `<div style="margin-top:10px">${stale ? `<span class="stale">${esc(L.staleExplain)} · </span>` : ""}<button class="btn" data-explain="${task.n}" style="font-size:12px;padding:2px 8px"${busy ? " disabled" : ""}>${esc(busy ? L.explaining : L.reexplain)}</button></div>` : ""}
   </div>`;
 }
 function taskHtml(task, ex) {
@@ -1241,7 +1311,7 @@ async function refresh() {
     }
     state.etag = data.etag;
     const first = !state.loaded;
-    Object.assign(state, { sessions: data.sessions, current: data.current, home: data.home || "", model: data.model, organize: data.organize, loaded: true, error: data.connected ? "" : L.switchingBanner });
+    Object.assign(state, { sessions: data.sessions, current: data.current, home: data.home || "", model: data.model, capabilities: data.capabilities || { ai: true }, organize: data.organize, loaded: true, error: data.connected ? "" : L.switchingBanner });
     if (first) {
       // Deep link from other pi-web pages (e.g. pi-learn's sources): /sessions/?id=<session id>
       const linked = new URLSearchParams(location.search).get("id");
@@ -1262,15 +1332,18 @@ async function mutate(body, okMsg) {
   catch (e) { toast(e.message); }
 }
 async function organize(ids) {
+  if (!state.capabilities.ai) return toast(L.aiUnavailable);
   if (!ids.length) return;
   if (!confirm(L.organizeConfirm(aiModelName(), ids.length))) return;
   try { state.organize = (await api("/api/organize", { ids, model: state.aiModel || undefined })).organize; renderHeader(); refresh(); }
   catch (e) { toast(e.message); }
 }
-const pickedVisible = () => state.ai ? [] : visible().filter(s => state.picked.has(s.id));
+function sourceName(source) { return source === "claude" ? "Claude Code" : source === "codex" ? "Codex" : "pi"; }
+const canDelete = s => !!s.capabilities?.delete && !isCurrent(s);
+const pickedVisible = () => state.ai ? [] : visible().filter(s => canDelete(s) && state.picked.has(s.id));
 function setPicking(on) { state.picking = on; state.picked.clear(); renderList(); }
 async function deleteSessions(list) {
-  const ids = list.filter(s => !isCurrent(s)).map(s => s.id);
+  const ids = list.filter(canDelete).map(s => s.id);
   if (!ids.length) return toast(L.delNothing);
   let trash;
   try { trash = (await api("/api/storage")).trash; } catch (e) { return toast(e.message); }
@@ -1295,6 +1368,13 @@ async function act(a) {
     try { const r = await api("/api/open", { id: s.id }); toast(r.message); if (r.ok) setTimeout(refresh, 1200); } catch (e) { toast(e.message); }
   }
   if (a === "rename") { state.editing = true; renderPreview(); }
+  if (a === "copy-resume") {
+    try { const { command } = await api("/api/resume-command?id=" + encodeURIComponent(s.id)); await copyText(command); } catch (e) { toast(e.message); }
+  }
+  if (a === "tags") {
+    const input = prompt(L.tagsPrompt, tags(s).join(", "));
+    if (input !== null) mutate({ id: s.id, tags: input.split(/[,，\s]+/).filter(Boolean) }, L.tagsSaved);
+  }
   if (a === "pin") mutate({ id: s.id, pinned: !s.meta.pinned }, s.meta.pinned ? L.unpinned : L.pinnedDone);
   if (a === "archive") mutate({ id: s.id, archived: !s.meta.archived }, s.meta.archived ? L.unarchived : L.archivedDone);
   if (a === "organize") organize([s.id]);
@@ -1303,6 +1383,7 @@ async function act(a) {
 }
 
 // ---- 事件 ----
+$("source").addEventListener("change", e => { state.source = e.target.value; state.scope = { kind: "all" }; exitAi(); renderSide(); });
 $("titleSeg").addEventListener("click", e => { const v = e.target.closest("button")?.dataset.v; if (!v) return; state.titleMode = v; savePrefs(); render(); });
 $("organize").addEventListener("click", async () => {
   if (state.organize.running) { try { state.organize = (await api("/api/organize/cancel", {})).organize; renderHeader(); toast(L.organizeCancelled); } catch (e) { toast(e.message); } return; }
@@ -1327,14 +1408,14 @@ $("list").addEventListener("click", e => {
   if (p) {
     const v = p.dataset.pick;
     if (v === "on" || v === "off") setPicking(v === "on");
-    if (v === "all") { for (const s of visible()) if (!isCurrent(s)) state.picked.add(s.id); renderList(); }
+    if (v === "all") { for (const s of visible()) if (canDelete(s)) state.picked.add(s.id); renderList(); }
     if (v === "none") { state.picked.clear(); renderList(); }
     if (v === "delete") deleteSessions(pickedVisible());
     return;
   }
   const pg = e.target.closest("[data-pick-group]");
   if (pg) {
-    const own = groups(visible()).find(x => x.key === pg.dataset.pickGroup)?.items.filter(s => !isCurrent(s)) ?? [];
+    const own = groups(visible()).find(x => x.key === pg.dataset.pickGroup)?.items.filter(canDelete) ?? [];
     const all = own.every(s => state.picked.has(s.id));
     for (const s of own) all ? state.picked.delete(s.id) : state.picked.add(s.id);
     renderList(); return;
@@ -1343,7 +1424,7 @@ $("list").addEventListener("click", e => {
   const c = e.target.closest("[data-id]"); if (!c) return;
   if (state.picking && !state.ai) {
     const s = state.sessions.find(x => x.id === c.dataset.id);
-    if (s && !isCurrent(s)) { state.picked.has(s.id) ? state.picked.delete(s.id) : state.picked.add(s.id); renderList(); }
+    if (s && canDelete(s)) { state.picked.has(s.id) ? state.picked.delete(s.id) : state.picked.add(s.id); renderList(); }
     return;
   }
   select(c.dataset.id, true);
@@ -1380,7 +1461,7 @@ $("preview").addEventListener("keydown", e => {
   if (e.target.id !== "rename") return;
   if (e.key === "Enter" && !e.isComposing) {
     const v = e.target.value.trim(); state.editing = false;
-    if (v && v !== title(state.sessions.find(x => x.id === state.selected))) mutate({ id: state.selected, title: v }, L.renamed); else renderPreview();
+    if (v && v !== title(state.sessions.find(x => x.id === state.selected))) mutate({ id: state.selected, title: v }, state.sessions.find(x => x.id === state.selected)?.capabilities?.nativeRename ? L.renamed : L.renamedLocal); else renderPreview();
   }
   if (e.key === "Escape") { state.editing = false; renderPreview(); }
 });

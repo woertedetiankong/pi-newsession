@@ -1,9 +1,11 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { normalizeSession, type SessionRoot, type SessionSource } from "./adapters.ts";
 
 export interface Message { role: "user" | "assistant"; text: string; }
 export interface SessionRecord {
   id: string; path: string; cwd: string; name?: string; model?: string; parent?: string;
+  source?: SessionSource; nativeId?: string;
   created: string; modified: string; count: number; firstUser: string;
   /** Images in any message on any branch (what "export images" writes). */
   images: number;
@@ -11,6 +13,10 @@ export interface SessionRecord {
   messages: Message[];
   /** Lower-cased conversation text for full-text search (capped). */
   text: string;
+}
+
+export async function readSession(record: SessionRecord): Promise<string> {
+  return normalizeSession(await readFile(record.path, "utf8"), record.source);
 }
 
 const PREVIEW_MESSAGES = 10, PREVIEW_CHARS = 1200, TEXT_CAP = 100_000;
@@ -75,26 +81,29 @@ export function parseSession(path: string, raw: string, mtime: Date): SessionRec
  * Only files whose mtime or size changed are re-parsed.
  */
 export class SessionScanner {
-  private cache = new Map<string, { mtimeMs: number; size: number; record?: SessionRecord }>();
-  constructor(private dirs: () => Promise<string[]>) {}
+  private cache = new Map<string, { mtimeMs: number; size: number; source: SessionSource; record?: SessionRecord }>();
+  constructor(private dirs: () => Promise<string[]>, private extraRoots: () => Promise<SessionRoot[]> = async () => []) {}
 
   async roots(): Promise<string[]> { return [...new Set((await this.dirs()).map(d => resolve(d)))]; }
+  async locations(): Promise<SessionRoot[]> {
+    return [...(await this.roots()).map(path => ({ source: "pi" as const, path, maxDepth: 1 })), ...(await this.extraRoots()).map(r => ({ ...r, path: resolve(r.path) }))];
+  }
 
   async scan(): Promise<SessionRecord[]> {
-    const paths = new Set<string>();
-    for (const root of await this.roots()) {
+    const paths = new Map<string, SessionSource>();
+    const walk = async (root: string, source: SessionSource, depth: number): Promise<void> => {
       let entries;
-      try { entries = await readdir(root, { withFileTypes: true }); } catch { continue; }
+      try { entries = await readdir(root, { withFileTypes: true }); } catch { return; }
       for (const e of entries) {
-        if (e.isFile() && e.name.endsWith(".jsonl")) paths.add(join(root, e.name));
-        else if (e.isDirectory()) {
-          try { for (const f of await readdir(join(root, e.name))) if (f.endsWith(".jsonl")) paths.add(join(root, e.name, f)); } catch {}
-        }
+        // Do not follow symlinks or Claude subagent trees into unrelated conversations.
+        if (e.isFile() && e.name.endsWith(".jsonl")) paths.set(join(root, e.name), source);
+        else if (e.isDirectory() && depth > 0) await walk(join(root, e.name), source, depth - 1);
       }
-    }
+    };
+    for (const root of await this.locations()) await walk(root.path, root.source, root.maxDepth);
     const out: SessionRecord[] = [], seenIds = new Set<string>();
-    for (const path of paths) {
-      const record = await this.load(path);
+    for (const [path, source] of paths) {
+      const record = await this.load(path, source);
       if (record && !seenIds.has(record.id)) { seenIds.add(record.id); out.push(record); }
     }
     for (const key of this.cache.keys()) if (!paths.has(key)) this.cache.delete(key);
@@ -109,14 +118,20 @@ export class SessionScanner {
     return (await this.roots()).some(root => parent === root || dirname(parent) === root);
   }
 
-  private async load(path: string): Promise<SessionRecord | undefined> {
+  private async load(path: string, source: SessionSource): Promise<SessionRecord | undefined> {
     let s;
     try { s = await stat(path); } catch { return undefined; }
     const hit = this.cache.get(path);
-    if (hit && hit.mtimeMs === s.mtimeMs && hit.size === s.size) return hit.record;
+    if (hit && hit.mtimeMs === s.mtimeMs && hit.size === s.size && hit.source === source) return hit.record;
     let record: SessionRecord | undefined;
-    try { record = parseSession(path, await readFile(path, "utf8"), s.mtime); } catch { record = undefined; }
-    this.cache.set(path, { mtimeMs: s.mtimeMs, size: s.size, record });
+    try {
+      record = parseSession(path, normalizeSession(await readFile(path, "utf8"), source), s.mtime);
+      if (record) {
+        record.nativeId = record.id; record.source = source;
+        if (source !== "pi") record.id = `${source}:${record.id}`;
+      }
+    } catch { record = undefined; }
+    this.cache.set(path, { mtimeMs: s.mtimeMs, size: s.size, source, record });
     return record;
   }
 }

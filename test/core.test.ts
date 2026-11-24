@@ -603,3 +603,31 @@ test("trash: deletion time is the file's mtime, and only files past the limit ar
   assert.equal(await purgeTrash(trash), 1);
   assert.deepEqual(await readdir(trash), ["note.txt"], "only session files and their emptied folders are removed");
 });
+
+test("server serves web/vendor files with content types and refuses anything else", async t => {
+  const root = await temp(t);
+  await mkdir(join(root, "web", "vendor"), { recursive: true });
+  const web = join(root, "web", "index.html"); await writeFile(web, "<p>page</p>");
+  await writeFile(join(root, "web", "vendor", "lib.min.js"), "window.lib=1");
+  await writeFile(join(root, "web", "vendor", "theme.css"), ".a{}");
+  await writeFile(join(root, "web", "vendor", "evil.html"), "<script>");
+  await writeFile(join(root, "web", "secret.js"), "secret");
+  await writeFile(join(root, "meta.json"), "{}");
+  const server = new SessionsServer({ root: join(root, "sessions"), metaFile: join(root, "meta.json"), webFile: web, token: "f".repeat(32) });
+  const url = await server.start();
+  t.after(() => server.close());
+  const { origin, host } = new URL(url);
+  const js = await fetch(origin + "/sessions/vendor/lib.min.js");
+  assert.equal(js.status, 200);
+  assert.match(js.headers.get("content-type") ?? "", /^text\/javascript/);
+  assert.equal(js.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(await js.text(), "window.lib=1");
+  assert.match((await fetch(origin + "/sessions/vendor/theme.css")).headers.get("content-type") ?? "", /^text\/css/);
+  // Raw paths, so the client does not normalize the dots away.
+  const raw = (path: string) => new Promise<number>((done, fail) => request({ host: "127.0.0.1", port: Number(new URL(url).port), path, headers: { host } }, res => { res.resume(); done(res.statusCode ?? 0); }).on("error", fail).end());
+  for (const p of ["/sessions/vendor/evil.html", "/sessions/vendor/missing.js", "/sessions/secret.js", "/sessions/index.html",
+    "/sessions/vendor/../secret.js", "/sessions/vendor/%2e%2e/secret.js", "/sessions/vendor/..%2fsecret.js", "/sessions/vendor/%2e%2e%5csecret.js",
+    "/sessions/vendor/.hidden.js", "/sessions/vendor//lib.min.js", "/sessions/vendor/sub/lib.min.js", "/sessions/vendor/%E0%A4%A.js"]) {
+    assert.equal(await raw(p), 404, p);
+  }
+});

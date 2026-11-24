@@ -1,6 +1,6 @@
-import { readdir, readFile, stat, writeFile, mkdir } from "node:fs/promises";
+import { readdir, stat, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { SessionRecord } from "./scan.ts";
+import { readSession, type SessionRecord } from "./scan.ts";
 import { type Lang, text } from "./i18n.ts";
 
 export interface SessionImage { data: Buffer; mimeType: string; role: string; }
@@ -26,12 +26,15 @@ export function sessionImages(raw: string, lang: Lang = "zh"): SessionImage[] {
 }
 
 /** "2026-09-23_修复滚动_abcd1234": readable, sortable, and safe on macOS, Windows and Linux. */
-export function folderName(record: Pick<SessionRecord, "id" | "created">, title: string): string {
+export function folderName(record: Pick<SessionRecord, "id" | "created" | "source" | "nativeId">, title: string): string {
   const d = new Date(record.created), pad = (n: number) => String(n).padStart(2, "0");
   const date = Number.isNaN(d.getTime()) ? "unknown" : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const safe = title.replace(/[\\/:*?"<>|\x00-\x1f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 40).replace(/[. ]+$/, "");
-  return [date, safe, record.id.slice(0, 8)].filter(Boolean).join("_");
+  return [date, safe, imageFolderKey(record)].filter(Boolean).join("_");
 }
+
+const imageFolderKey = (record: Pick<SessionRecord, "id" | "source" | "nativeId">) => record.source && record.source !== "pi"
+  ? `${record.source}-${(record.nativeId ?? record.id).replace(/[^a-zA-Z0-9-]/g, "").slice(0, 8)}` : record.id.slice(0, 8);
 
 /**
  * Writes each session's images to <dir>/<folder>/001-用户.png …
@@ -43,9 +46,9 @@ export async function exportImages(sessions: { record: SessionRecord; title: str
   const existing = await readdir(dir).catch(() => [] as string[]);
   const result: ExportResult = { dir, sessions: 0, images: 0, written: 0 };
   for (const { record, title } of sessions) {
-    const images = sessionImages(await readFile(record.path, "utf8"), lang);
+    const images = sessionImages(await readSession(record), lang);
     if (!images.length) continue;
-    const folder = join(dir, existing.find(n => n.endsWith("_" + record.id.slice(0, 8))) ?? folderName(record, title));
+    const folder = join(dir, existing.find(n => n.endsWith("_" + imageFolderKey(record))) ?? folderName(record, title));
     await mkdir(folder, { recursive: true });
     result.sessions++; result.folder = folder;
     const present = await readdir(folder).catch(() => [] as string[]);
