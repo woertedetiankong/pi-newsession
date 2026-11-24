@@ -19,7 +19,7 @@ import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Serv
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 
-export const HUB_VERSION = 3;
+export const HUB_VERSION = 4;
 export const DEFAULT_PORT = 47291;
 
 export type WebLanguage = "zh" | "en";
@@ -307,7 +307,10 @@ class Hub implements WebHub {
       sendJson(req, res, data);
     } catch (e) {
       const status = typeof (e as { status?: unknown }).status === "number" ? (e as { status: number }).status : 500;
-      if (!res.headersSent) send(res, status, JSON.stringify({ error: (e as Error).message }), { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      if (!res.headersSent) send(res, status, JSON.stringify({ error: (e as Error).message }), {
+        "content-type": "application/json; charset=utf-8", "cache-control": "no-store",
+        ...(status === 413 ? { connection: "close" } : {}),
+      });
       else res.destroy();
     }
   }
@@ -347,19 +350,20 @@ function sendJson(req: IncomingMessage, res: ServerResponse, data: unknown): voi
 
 function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    let size = 0; const chunks: Buffer[] = [];
+    let size = 0, exceeded = false; const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => {
+      if (exceeded) return;
       size += c.length;
-      if (size > limit) { reject(webError(413, "request too large / 请求太大")); req.destroy(); } else chunks.push(c);
+      if (size > limit) { exceeded = true; chunks.length = 0; reject(webError(413, "request too large / 请求太大")); } else chunks.push(c);
     });
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-    req.on("error", reject);
+    req.on("end", () => { if (!exceeded) resolve(Buffer.concat(chunks)); });
+    req.on("error", err => { if (!exceeded) reject(err); });
   });
 }
 
 async function readJson(req: IncomingMessage): Promise<any> {
   if (!String(req.headers["content-type"] ?? "").startsWith("application/json")) throw webError(415, "JSON required / 需要 JSON");
-  const body = await readBody(req, 64 * 1024);
+  const body = await readBody(req, 1024 * 1024);
   if (!body.length) return {};
   try { return JSON.parse(body.toString("utf8")); } catch { throw webError(400, "invalid JSON / JSON 格式错误"); }
 }

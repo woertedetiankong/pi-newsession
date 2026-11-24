@@ -44,6 +44,8 @@ export interface ServerOptions {
     settingsFile?: string;
   /** Local Claude Code and Codex locations. No network history is queried. */
   sources?: SessionRoot[];
+  /** Optional local disk cache for scanned session metadata (stays on this machine). */
+  cacheFile?: string;
   standalone?: boolean;
   openSession?: (record: SessionRecord, lang: Lang) => Promise<{ ok: boolean; message: string; command?: string }>;
 }
@@ -78,7 +80,8 @@ export class SessionsServer implements WebApp {
 
   constructor(private opts: ServerOptions) {
     this.meta = new MetaStore(opts.metaFile);
-    this.scanner = new SessionScanner(async () => [opts.root, ...(await (await this.currentMeta()).sessionDirs())], async () => opts.sources ?? []);
+    const cacheFile = opts.cacheFile ?? (opts.location ? join(opts.location.defaultDir, "scan-cache.json") : undefined);
+    this.scanner = new SessionScanner(async () => [opts.root, ...(await (await this.currentMeta()).sessionDirs())], async () => opts.sources ?? [], cacheFile);
     this.organizer = new Organizer((id, signal) => this.organize(id, signal));
     this.hub = opts.token || opts.standalone
       ? createHub({ agentDir: opts.agentDir ?? "", token: opts.token, port: opts.port ?? (opts.standalone ? 47291 : 0) })

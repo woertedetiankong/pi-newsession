@@ -714,12 +714,14 @@ function groups(list) {
 }
 
 // ---- 渲染 ----
+const inSource = s => state.source === "all" || (s.source || "pi") === state.source;
+const pendingOrganize = () => state.sessions.filter(s => inSource(s) && needsOrganize(s));
 function renderHeader() {
   $("source").value = state.source;
   $("ask").hidden = !state.capabilities.ai;
   $("aiModel").hidden = !state.capabilities.ai;
   for (const b of $("titleSeg").children) b.classList.toggle("on", b.dataset.v === state.titleMode);
-  const o = state.organize, b = $("organize"), pending = state.sessions.filter(needsOrganize).length;
+  const o = state.organize, b = $("organize"), pending = pendingOrganize().length;
   b.hidden = !state.capabilities.ai || (!o.running && !pending);
   b.classList.toggle("primary", !o.running);
   b.textContent = o.running ? L.organizing(o.done + o.failed, o.total) : L.organizeN(pending);
@@ -1335,7 +1337,12 @@ async function organize(ids) {
   if (!state.capabilities.ai) return toast(L.aiUnavailable);
   if (!ids.length) return;
   if (!confirm(L.organizeConfirm(aiModelName(), ids.length))) return;
-  try { state.organize = (await api("/api/organize", { ids, model: state.aiModel || undefined })).organize; renderHeader(); refresh(); }
+  try {
+    for (let i = 0; i < ids.length; i += 500) {
+      state.organize = (await api("/api/organize", { ids: ids.slice(i, i + 500), model: state.aiModel || undefined })).organize;
+    }
+    renderHeader(); refresh();
+  }
   catch (e) { toast(e.message); }
 }
 function sourceName(source) { return source === "claude" ? "Claude Code" : source === "codex" ? "Codex" : "pi"; }
@@ -1383,11 +1390,11 @@ async function act(a) {
 }
 
 // ---- 事件 ----
-$("source").addEventListener("change", e => { state.source = e.target.value; state.scope = { kind: "all" }; exitAi(); renderSide(); });
+$("source").addEventListener("change", e => { state.source = e.target.value; state.scope = { kind: "all" }; exitAi(); renderHeader(); renderSide(); });
 $("titleSeg").addEventListener("click", e => { const v = e.target.closest("button")?.dataset.v; if (!v) return; state.titleMode = v; savePrefs(); render(); });
 $("organize").addEventListener("click", async () => {
   if (state.organize.running) { try { state.organize = (await api("/api/organize/cancel", {})).organize; renderHeader(); toast(L.organizeCancelled); } catch (e) { toast(e.message); } return; }
-  organize(state.sessions.filter(needsOrganize).sort((a, b) => b.modified.localeCompare(a.modified)).map(s => s.id));
+  organize(pendingOrganize().sort((a, b) => b.modified.localeCompare(a.modified)).map(s => s.id));
 });
 $("side").addEventListener("click", e => {
   const tag = e.target.closest("[data-tag]"); if (tag) { if (state.ai) { askAbort?.abort(); state.ai = null; } state.q = "#" + tag.dataset.tag; $("q").value = state.q; runSearch(); render(); return; }

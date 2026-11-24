@@ -631,3 +631,35 @@ test("server serves web/vendor files with content types and refuses anything els
     assert.equal(await raw(p), 404, p);
   }
 });
+
+test("hub accepts >64KB JSON bodies and returns clean 413 JSON above 1MB", async t => {
+  const root = await temp(t), token = "e".repeat(32);
+  await writeFile(join(root, "index.html"), "");
+  const server = new SessionsServer({ root: join(root, "sessions"), metaFile: join(root, "meta.json"), webFile: join(root, "index.html"), token, standalone: true, port: 0 });
+  const base = new URL(await server.start()).origin;
+  t.after(() => server.close());
+  const headers = { "x-token": token, "content-type": "application/json" };
+  const bigIds = Array.from({ length: 2000 }, (_, i) => `codex:01a0509f-148e-7b82-8e10-${String(i).padStart(12, "0")}`);
+  const ok = await fetch(base + api("/api/organize"), { method: "POST", headers, body: JSON.stringify({ ids: bigIds }) });
+  assert.equal(ok.status, 503, ">64KB JSON reaches route handler instead of failing with 413/ERR_EMPTY_RESPONSE");
+  await ok.text();
+  const tooBig = await fetch(base + api("/api/organize"), { method: "POST", headers, body: JSON.stringify({ ids: ["x".repeat(1024 * 1024 + 4096)] }) });
+  assert.equal(tooBig.status, 413);
+  assert.match(String((await tooBig.json()).error), /request too large/);
+});
+
+test("scanner persists disk cache across restarts and re-parses modified files", async t => {
+  const root = await temp(t), dir = join(root, "sessions", "--p--"), cacheFile = join(root, "scan-cache.json");
+  await mkdir(dir, { recursive: true });
+  for (let i = 0; i < 5; i++) await writeFile(join(dir, `s${i}.jsonl`), sessionFile(`s${i}`, "/p", [["user", `msg ${i}`]]));
+  const first = await new SessionScanner(async () => [join(root, "sessions")], async () => [], cacheFile).scan();
+  assert.equal(first.length, 5);
+  assert.ok((await stat(cacheFile)).size > 0);
+  // Second scanner starts cold from disk cache and sees unchanged + updated files.
+  const second = new SessionScanner(async () => [join(root, "sessions")], async () => [], cacheFile);
+  const cached = await second.scan();
+  assert.deepEqual(cached.map(r => r.id).sort(), first.map(r => r.id).sort());
+  await writeFile(join(dir, "s0.jsonl"), sessionFile("s0", "/p", [["user", "updated msg"]]));
+  const refreshed = await second.scan();
+  assert.equal(refreshed.find(r => r.id === "s0")?.firstUser, "updated msg");
+});
